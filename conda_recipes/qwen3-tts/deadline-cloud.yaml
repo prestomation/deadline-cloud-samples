@@ -1,0 +1,12 @@
+condaPlatforms:
+  - platform: linux-64
+    variant: cuda
+    defaultSubmit: true
+    additionalHostRequirements:
+      amounts:
+        - name: amount.worker.gpu
+          min: 1
+    buildTool: rattler-build
+jobParameters:
+  - name: CondaChannels
+    value: conda-forge

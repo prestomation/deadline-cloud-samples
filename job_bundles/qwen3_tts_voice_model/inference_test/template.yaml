@@ -1,0 +1,103 @@
+specificationVersion: 'jobtemplate-2023-09'
+
+name: Qwen3 TTS Inference Test
+description: Test Qwen3-TTS inference with built-in voices (no training required).
+
+parameterDefinitions:
+- name: Text
+  description: Text to synthesize.
+  userInterface:
+    control: LINE_EDIT
+    label: Text
+  type: STRING
+  default: "Hello, this is a test of the Qwen3 text to speech system."
+
+- name: Speaker
+  description: Built-in speaker voice.
+  userInterface:
+    control: DROPDOWN_LIST
+    label: Speaker
+  type: STRING
+  default: "Vivian"
+  allowedValues: ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"]
+
+- name: Language
+  description: Language for synthesis.
+  userInterface:
+    control: DROPDOWN_LIST
+    label: Language
+  type: STRING
+  default: "English"
+  allowedValues: ["Auto", "Chinese", "English", "Japanese", "Korean", "German", "French", "Russian", "Portuguese", "Spanish", "Italian"]
+
+- name: OutputDir
+  description: Output directory for generated audio.
+  userInterface:
+    control: CHOOSE_DIRECTORY
+    label: Output Directory
+  type: PATH
+  objectType: DIRECTORY
+  dataFlow: OUT
+  minLength: 1
+
+- name: CondaPackages
+  type: STRING
+  default: "pytorch-gpu transformers accelerate soundfile"
+  userInterface:
+    control: HIDDEN
+
+- name: CondaChannels
+  type: STRING
+  default: "conda-forge"
+  userInterface:
+    control: HIDDEN
+
+steps:
+- name: Synthesize
+  script:
+    actions:
+      onRun:
+        command: bash
+        args: ['{{Task.File.Run}}']
+    embeddedFiles:
+    - name: Run
+      type: TEXT
+      data: |
+        #!/bin/env bash
+        set -xeuo pipefail
+        
+        # Install qwen-tts via pip
+        pip install qwen-tts
+        
+        mkdir -p '{{Param.OutputDir}}'
+        
+        python3 << 'PYTHON_SCRIPT'
+        import torch
+        import soundfile as sf
+        from qwen_tts import Qwen3TTSModel
+        
+        print("Loading Qwen3-TTS model...")
+        model = Qwen3TTSModel.from_pretrained(
+            "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+            device_map="cuda:0" if torch.cuda.is_available() else "cpu",
+            dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+        )
+        
+        print("Generating speech...")
+        wavs, sr = model.generate_custom_voice(
+            text="{{Param.Text}}",
+            language="{{Param.Language}}",
+            speaker="{{Param.Speaker}}",
+        )
+        
+        output_path = "{{Param.OutputDir}}/output.wav"
+        sf.write(output_path, wavs[0], sr)
+        print(f"Audio saved to: {output_path}")
+        PYTHON_SCRIPT
+        
+        echo "openjd_status: Synthesis complete"
+  hostRequirements:
+    attributes:
+    - name: attr.worker.os.family
+      anyOf:
+      - linux

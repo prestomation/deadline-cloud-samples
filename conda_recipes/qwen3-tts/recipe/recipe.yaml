@@ -1,0 +1,39 @@
+# Qwen3-TTS conda recipe in rattler-build format
+
+context:
+  version: "0.1.0"
+
+package:
+  name: qwen3-tts
+  version: ${{ version }}
+
+source:
+  - git: https://github.com/QwenLM/Qwen3-TTS.git
+    rev: "main"
+    target_directory: qwen3_tts
+
+build:
+  number: 0
+
+requirements:
+  build:
+    - python >=3.10
+    - pip
+    - setuptools
+    - wheel
+  host:
+    - python >=3.10
+    - pip
+    - setuptools
+    - wheel
+  run:
+    - python >=3.10
+
+tests:
+- script:
+  - python --version
+
+about:
+  homepage: https://github.com/QwenLM/Qwen3-TTS
+  license: Apache-2.0
+  summary: Qwen3-TTS voice clone and TTS package

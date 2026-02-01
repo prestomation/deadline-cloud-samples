@@ -1,0 +1,272 @@
+specificationVersion: 'jobtemplate-2023-09'
+
+name: Qwen3 TTS Voice Model Training
+description: |
+  Trains a custom voice model from audio recordings using the Qwen3-TTS pipeline.
+  Uses the official qwen-tts package for fine-tuning Qwen3-TTS-12Hz-Base models.
+  Input: Voice audio recordings (.wav) with transcripts
+  Output: A fine-tuned voice model for text-to-speech synthesis.
+
+parameterDefinitions:
+
+# Input Data
+- name: AudioInputDir
+  description: Directory containing voice audio recordings (.wav) for training.
+  userInterface:
+    control: CHOOSE_DIRECTORY
+    label: Audio Input Directory
+    groupLabel: Input Data
+  type: PATH
+  objectType: DIRECTORY
+  dataFlow: IN
+  minLength: 1
+
+- name: TranscriptFile
+  description: |
+    JSONL file with training data. Each line: {"audio": "path.wav", "text": "transcript", "ref_audio": "ref.wav"}
+    If not provided, will attempt to auto-generate from audio filenames.
+  userInterface:
+    control: CHOOSE_INPUT_FILE
+    label: Transcript JSONL File
+    groupLabel: Input Data
+    fileFilters:
+    - label: JSONL Files
+      patterns: ["*.jsonl", "*.json"]
+    - label: All Files
+      patterns: ["*"]
+  type: PATH
+  objectType: FILE
+  dataFlow: IN
+  default: ""
+
+- name: RefAudio
+  description: Reference audio file for speaker voice. Should be a clean 3-10 second sample.
+  userInterface:
+    control: CHOOSE_INPUT_FILE
+    label: Reference Audio
+    groupLabel: Input Data
+    fileFilters:
+    - label: Audio Files
+      patterns: ["*.wav", "*.mp3", "*.flac"]
+    - label: All Files
+      patterns: ["*"]
+  type: PATH
+  objectType: FILE
+  dataFlow: IN
+  default: ""
+
+# Output Data
+- name: OutputModelDir
+  description: Directory where the fine-tuned voice model will be saved.
+  userInterface:
+    control: CHOOSE_DIRECTORY
+    label: Output Model Directory
+    groupLabel: Output Data
+  type: PATH
+  objectType: DIRECTORY
+  dataFlow: OUT
+  minLength: 1
+
+# Model Selection
+- name: BaseModel
+  description: Base Qwen3-TTS model to fine-tune.
+  userInterface:
+    control: DROPDOWN_LIST
+    label: Base Model
+    groupLabel: Model Selection
+  type: STRING
+  default: "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+  allowedValues:
+  - "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+  - "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+
+# Training Parameters
+- name: SpeakerName
+  description: Name for the fine-tuned speaker voice.
+  userInterface:
+    control: LINE_EDIT
+    label: Speaker Name
+    groupLabel: Training Parameters
+  type: STRING
+  default: "custom_voice"
+
+- name: NumEpochs
+  description: Number of training epochs.
+  userInterface:
+    control: SPIN_BOX
+    label: Number of Epochs
+    groupLabel: Training Parameters
+  type: INT
+  default: 3
+  minValue: 1
+
+- name: BatchSize
+  description: Training batch size.
+  userInterface:
+    control: SPIN_BOX
+    label: Batch Size
+    groupLabel: Training Parameters
+  type: INT
+  default: 2
+  minValue: 1
+
+- name: LearningRate
+  description: Learning rate for training.
+  userInterface:
+    control: LINE_EDIT
+    label: Learning Rate
+    groupLabel: Training Parameters
+  type: STRING
+  default: "2e-5"
+
+# Inference Test
+- name: TestSentence
+  description: Sentence to synthesize after training to verify the model.
+  userInterface:
+    control: LINE_EDIT
+    label: Test Sentence
+    groupLabel: Inference Test
+  type: STRING
+  default: "Hello, this is a test of my new custom voice model."
+
+# Hidden
+- name: JobScriptDir
+  description: Directory containing bundled scripts.
+  userInterface:
+    control: HIDDEN
+  type: PATH
+  objectType: DIRECTORY
+  dataFlow: IN
+  default: scripts
+
+jobEnvironments:
+- name: Setup
+  variables:
+    PYTHONUNBUFFERED: "True"
+  script:
+    actions:
+      onEnter:
+        command: bash
+        args: ['{{Env.File.Enter}}']
+    embeddedFiles:
+    - name: Enter
+      type: TEXT
+      runnable: true
+      data: |
+        #!/bin/env bash
+        set -xeuo pipefail
+        
+        for FILE in '{{Param.JobScriptDir}}'/*.sh; do
+            if [ -f "$FILE" ]; then
+                cat "$FILE" | tr -d '\r' > "$FILE.tr"
+                mv -f "$FILE.tr" "$FILE"
+                chmod u+x "$FILE"
+            fi
+        done
+        echo "openjd_env: PATH={{Param.JobScriptDir}}:$PATH"
+
+steps:
+
+- name: PrepareData
+  description: Prepare training data and extract audio codes.
+  script:
+    actions:
+      onRun:
+        command: bash
+        args: ['{{Task.File.Run}}']
+    embeddedFiles:
+    - name: Run
+      type: TEXT
+      data: |
+        #!/bin/env bash
+        set -xeuo pipefail
+        
+        echo "openjd_status: Preparing training data"
+        
+        prepare_training_data.sh \
+            '{{Param.AudioInputDir}}' \
+            '{{Param.TranscriptFile}}' \
+            '{{Param.RefAudio}}' \
+            '{{Session.WorkingDirectory}}/train_with_codes.jsonl'
+        
+        echo "openjd_status: Data preparation complete"
+  hostRequirements:
+    attributes:
+    - name: attr.worker.os.family
+      anyOf:
+      - linux
+    amounts:
+    - name: amount.worker.gpu
+      min: 1
+
+- name: TrainVoiceModel
+  description: Fine-tune the Qwen3-TTS voice model.
+  dependencies:
+  - dependsOn: PrepareData
+  script:
+    actions:
+      onRun:
+        command: bash
+        args: ['{{Task.File.Run}}']
+    embeddedFiles:
+    - name: Run
+      type: TEXT
+      data: |
+        #!/bin/env bash
+        set -xeuo pipefail
+        
+        echo "openjd_status: Starting voice model fine-tuning"
+        
+        train_voice_model.sh \
+            '{{Param.BaseModel}}' \
+            '{{Session.WorkingDirectory}}/train_with_codes.jsonl' \
+            '{{Param.OutputModelDir}}' \
+            '{{Param.SpeakerName}}' \
+            {{Param.NumEpochs}} \
+            {{Param.BatchSize}} \
+            {{Param.LearningRate}}
+        
+        echo "openjd_status: Voice model training complete"
+  hostRequirements:
+    attributes:
+    - name: attr.worker.os.family
+      anyOf:
+      - linux
+    amounts:
+    - name: amount.worker.gpu
+      min: 1
+
+- name: TestInference
+  description: Run sample inference to verify the trained model.
+  dependencies:
+  - dependsOn: TrainVoiceModel
+  script:
+    actions:
+      onRun:
+        command: bash
+        args: ['{{Task.File.Run}}']
+    embeddedFiles:
+    - name: Run
+      type: TEXT
+      data: |
+        #!/bin/env bash
+        set -xeuo pipefail
+        
+        echo "openjd_status: Running inference test"
+        
+        run_inference.sh \
+            '{{Param.OutputModelDir}}' \
+            '{{Param.SpeakerName}}' \
+            '{{Param.TestSentence}}' \
+            '{{Param.OutputModelDir}}/test_output.wav'
+        
+        echo "openjd_status: Inference test complete"
+        echo "Test audio saved to: {{Param.OutputModelDir}}/test_output.wav"
+  hostRequirements:
+    attributes:
+    - name: attr.worker.os.family
+      anyOf:
+      - linux
+    amounts:
+    - name: amount.worker.gpu
+      min: 1
