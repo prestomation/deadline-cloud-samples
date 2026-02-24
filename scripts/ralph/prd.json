@@ -4,11 +4,14 @@
   "description": "Create a conda package and job bundle sample for the Maya USD plugin (Autodesk maya-usd), build the package, and test rendering a USD scene on AWS Deadline Cloud",
   "context": {
     "technologyConstraints": {
-      "mayaVersion": "Maya 2026 is the target version",
-      "mayaUsdVersion": "0.35.0 is the latest release",
+      "mayaVersion": "Maya 2026.0 (API 20260000, cut 202502240946) is the version in the deadline-cloud conda channel",
+      "mayaUsdVersion": "0.32.0 is the compatible version for Maya 2026.0. 0.33+ requires Maya 2026.2+ due to dual-USD (MULTI_USD_VERSION) and Ufe ABI changes",
+      "mayaUsdVersionIncompatibility": "MayaUSD 0.35.0 was built for Maya 2026.3 and fails with 'undefined symbol: _ZNK6Ufe_v614TypedAttributeIjE4typeB5cxx11Ev' on Maya 2026.0. The .mod file also uses $MULTI_USD_VERSION which Maya 2026.0 does not set (feature added in 2026.2)",
       "linuxOnly": "Linux-64 platform only for initial implementation",
       "condaBuildTool": "Use rattler-build format for recipes (not conda-build)",
-      "installerIssue": "The .run installer is a Makeself archive with two interactive prompts: (1) license text piped through 'less -e' which hijacks the terminal, and (2) a menu asking 1=Install, 2=Extract, 3=Exit. To run non-interactively: create a fake 'less' script (#!/bin/sh\\ncat > /dev/null), prepend it to PATH, then pipe 'yes\\n2' to stdin. Example: mkdir -p /tmp/fakeless && echo '#!/bin/sh\\ncat > /dev/null' > /tmp/fakeless/less && chmod +x /tmp/fakeless/less && echo -e 'yes\\n2' | PATH=/tmp/fakeless:$PATH ./MayaUSD_0.35.0_Maya2026.3_Linux.run --nox11 --target /path/to/extract"
+      "installerIssue": "The .run installer is a Makeself archive with two interactive prompts: (1) license text piped through 'less -e' which hijacks the terminal, and (2) a menu asking 1=Install, 2=Extract, 3=Exit. To run non-interactively: create a fake 'less' script (#!/bin/sh\\ncat > /dev/null), prepend it to PATH, then pipe 'yes\\n2' to stdin.",
+      "customCondaChannel": "Queue environment updated to use custom S3 conda channel s3://rendering-agent-spaces-workshop/Conda/Default as first channel before deadline-cloud. Queue IAM role already has s3:GetObject and s3:ListBucket on the Conda/ prefix.",
+      "pluginLoadingIssues": "MayaUSD plugin requires: (1) .mod file in a directory on MAYA_MODULE_PATH, (2) LD_LIBRARY_PATH to include Maya lib dir and MayaUSD lib dir for shared library dependencies. The job template uses a shell wrapper (run.sh) to set these before launching mayapy."
     },
     "referenceImplementation": {
       "mayaPluginRecipe": "conda_recipes/maya-mtoa-2026/ - Example Maya plugin conda recipe",
@@ -17,14 +20,23 @@
       "mayaJobBundle": "job_bundles/maya_cli_render/ - Maya CLI rendering job bundle"
     },
     "infrastructureValues": {
-      "mayaUsdDownloadUrl": "https://github.com/Autodesk/maya-usd/releases/download/v0.35.0/MayaUSD_0.35.0_Maya2026.3_Linux.run",
-      "deadlineMonitorUrl": "https://sandbox.us-west-2.gamma.monitor.bealine.aws.dev/farms/farm-f8466bc9640c4ebdbf072073372464ec/queues/queue-8f7df3db6e4844a7acea0a11a0098959"
+      "mayaUsdDownloadUrl": "https://github.com/Autodesk/maya-usd/releases/download/v0.32.0/MayaUSD_0.32.0_Maya2026.1_Linux.run",
+      "mayaUsdSha256": "8087a83fded89c058bf1cfb4bc808490e210b3e9bbb8b24672dcbe7d69f52f20",
+      "deadlineMonitorUrl": "https://sandbox.us-west-2.gamma.monitor.bealine.aws.dev/farms/farm-f8466bc9640c4ebdbf072073372464ec/queues/queue-8f7df3db6e4844a7acea0a11a0098959",
+      "farmId": "farm-f8466bc9640c4ebdbf072073372464ec",
+      "queueId": "queue-8f7df3db6e4844a7acea0a11a0098959",
+      "queueName": "RenderingAgentSpacesWorkshop",
+      "s3Bucket": "rendering-agent-spaces-workshop",
+      "s3CondaChannel": "s3://rendering-agent-spaces-workshop/Conda/Default",
+      "awsProfile": "GammaSandbox",
+      "awsAccount": "541723674653",
+      "queueRoleArn": "arn:aws:iam::541723674653:role/service-role/AWSDeadlineCloudQueueRole-RenderingAgentSpacesWorkshop"
     },
     "commands": {
-      "submitCondaBuild": "./submit-package-job maya-usd-2026 -p linux-64",
-      "submitJobBundle": "deadline bundle submit job_bundles/maya_usd_render/",
-      "waitForJob": "deadline job wait --job-id JOB_ID --timeout 600",
-      "getJobLogs": "deadline job logs --job-id JOB_ID"
+      "submitCondaBuild": "AWS_PROFILE=GammaSandbox ./submit-package-job maya-usd-2026 --s3-channel s3://rendering-agent-spaces-workshop/Conda/Default -q RenderingAgent",
+      "submitJobBundle": "deadline bundle submit job_bundles/maya_usd_render/ --farm-id farm-f8466bc9640c4ebdbf072073372464ec --queue-id queue-8f7df3db6e4844a7acea0a11a0098959 --profile GammaSandbox --yes",
+      "waitForJob": "deadline job wait --farm-id farm-f8466bc9640c4ebdbf072073372464ec --queue-id queue-8f7df3db6e4844a7acea0a11a0098959 --job-id JOB_ID --profile GammaSandbox",
+      "getJobLogs": "deadline job logs --farm-id farm-f8466bc9640c4ebdbf072073372464ec --queue-id queue-8f7df3db6e4844a7acea0a11a0098959 --job-id JOB_ID --profile GammaSandbox"
     }
   },
   "bestPractices": [
@@ -104,8 +116,8 @@
         ]
       },
       "acceptanceCriteria": [
-        "Copy the MayaUSD_0.35.0_Maya2026.3_Linux.run installer to conda_recipes/archive_files/",
-        "Run ./submit-package-job maya-usd-2026 -p linux-64 from conda_recipes/ directory",
+        "Copy the MayaUSD_0.32.0_Maya2026.1_Linux.run installer to conda_recipes/archive_files/",
+        "Run 'AWS_PROFILE=GammaSandbox ./submit-package-job maya-usd-2026 --s3-channel s3://rendering-agent-spaces-workshop/Conda/Default -q RenderingAgent' from conda_recipes/ directory",
         "Capture the job ID from submission output",
         "Wait for the conda build job to complete using 'deadline job wait --job-id JOB_ID --timeout 600'",
         "If job fails, run 'deadline job logs --job-id JOB_ID' to get error details and fix the recipe",
@@ -114,7 +126,7 @@
       ],
       "priority": 3,
       "passes": true,
-      "notes": "Job job-c643505f58e24404ad4f2c714899c456 completed successfully. Package built to s3://rendering-agent-spaces-workshop/Conda/Default. Queue: RenderingAgentSpacesWorkshop."
+      "notes": "Build succeeded with MayaUSD 0.32.0. Job job-89aee2f44fff4c39a79af5a883b5af2e completed in ~249s. Fixed SIGPIPE (exit 141) in build.sh by replacing 'find|head -1' with 'find -print -quit'. Package published to s3://rendering-agent-spaces-workshop/Conda/Default."
     },
     {
       "id": "US-004",
@@ -164,7 +176,7 @@
       ],
       "priority": 5,
       "passes": false,
-      "notes": ""
+      "notes": "Multiple submit attempts failed due to: (1) MayaUSD 0.35.0 ABI incompatibility with Maya 2026.0 - undefined symbol in libusdUfe.so from Ufe_v6 mismatch, (2) MULTI_USD_VERSION env var unset (Maya 2026.0 doesn't support it, added in 2026.2), (3) .mod file paths not resolving, (4) LD_LIBRARY_PATH not set for Maya/MayaUSD shared libs. Job template updated with shell wrapper (run.sh) to set LD_LIBRARY_PATH and MAYA_PLUG_IN_PATH before launching mayapy. Blocked on rebuilding conda package with MayaUSD 0.32.0."
     }
   ]
 }
