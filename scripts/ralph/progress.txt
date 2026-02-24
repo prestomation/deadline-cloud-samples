@@ -1,0 +1,84 @@
+# Ralph Progress Log
+Started: 2026-02-24
+---
+
+## Codebase Patterns
+- Use rattler-build recipe.yaml format (not conda-build meta.yaml)
+- deadline-cloud.yaml lists sourceArchiveFilename and sourceDownloadInstructions for manual downloads
+- Maya plugin recipes use `usr/autodesk/modules/maya/<version>/` for .mod files so Maya auto-loads plugins
+- build.sh uses `set -xeuo pipefail` and references `$PREFIX`, `$SRC_DIR`, `$PKG_VERSION`
+- Plugin recipes depend on `maya 2026.*` in both build and run requirements
+- MayaUSD .run installer is Makeself 2.3.0 containing an RPM, not a direct file tree
+- RPM extraction: `rpm -ivh --nodeps --noscripts --root $DIR file.rpm` (no cpio needed)
+- RPM installs to: /usr/autodesk/mayausd/maya2026/<build_version>/mayausd/{MayaUSD_*,USD_*}
+- The .mod file uses %MULTI_USD_VERSION% and <PLUGIN_DIR> placeholders
+- Plugin has multi-USD-version layout: MayaUSD_0.24.11, MayaUSD_0.25.5, USD_0.24.11, USD_0.25.5
+
+---
+
+## Story Log
+
+## 2026-02-24T02:23 - US-001
+- Created maya-usd-2026 conda recipe structure
+- Files created:
+  - conda_recipes/maya-usd-2026/deadline-cloud.yaml
+  - conda_recipes/maya-usd-2026/recipe/recipe.yaml
+  - conda_recipes/maya-usd-2026/recipe/build.sh
+  - conda_recipes/maya-usd-2026/README.md
+- **Learnings for future iterations:**
+  - Maya plugin recipes follow a consistent pattern: deadline-cloud.yaml + recipe/recipe.yaml + recipe/build.sh + README.md
+  - The .run installer is a self-extracting archive, use --noexec --target to extract without running
+  - Maya module files (.mod) go in usr/autodesk/modules/maya/<version>/ for auto-loading
+  - sha256 is PLACEHOLDER since we don't have the actual installer to compute it
+---
+
+## 2026-02-24T02:25 - US-002
+- Created maya_usd_render job bundle with template.yaml and README.md
+- Files created:
+  - job_bundles/maya_usd_render/template.yaml
+  - job_bundles/maya_usd_render/README.md
+- Template uses mayapy to run a Python script that loads mayaUsdPlugin, imports USD, and renders with Maya software renderer
+- Parameters: USDSceneFile, Frames, OutputDir, ImageWidth, ImageHeight, CondaPackages (default: maya-usd)
+- hostRequirements restricts to linux
+- Template passes `openjd check` validation
+- **Learnings for future iterations:**
+  - Job templates use mayapy (not maya or Render CLI) for USD workflows since we need Python scripting to load plugins and import USD
+  - Maya software renderer is used as the default since we're not integrating specific render engines (Arnold etc.) per notInScope
+  - CondaPackages defaults to "maya-usd" which should pull in maya as a dependency
+  - Follow the houdini_husk_usd_render pattern for USD-related job bundles
+---
+
+## 2026-02-24T02:27 - US-003
+- Created sample.usda in job_bundles/maya_usd_render/ with cube, sphere, camera, dome light, and distant key light
+- Files created:
+  - job_bundles/maya_usd_render/sample.usda
+- Template already defaults USDSceneFile to sample.usda (set in US-002)
+- Template passes openjd check validation
+- **Learnings for future iterations:**
+  - Follow the houdini_husk_usd_render/sample.usda pattern for USD scene structure
+  - DomeLight provides ambient fill, DistantLight provides directional key light - minimal lighting setup
+  - USD Cube/Sphere are built-in geometric primitives, no mesh data needed
+---
+
+## 2026-02-24T03:57 - US-001
+- Tested maya-usd installer extraction locally
+- Confirmed: Makeself 2.3.0 archive, `--help` and `--info` flags work
+- Extraction method: fake `less` + `printf 'yes\n2\n'` + `--nox11 --target DIR`
+- CRITICAL FINDING: Archive contains an RPM file, NOT a direct plugin directory
+  - `MayaUSD2026-202602171127-017700d-0.35.0-1.x86_64.rpm` (411MB)
+  - `setup.sh` (just runs `rpm -ih`, requires root)
+  - `EULA/` directory
+- RPM extraction without root: `rpm -ivh --nodeps --noscripts --root $DIR file.rpm`
+- Plugin file locations (from RPM):
+  - `/usr/autodesk/mayausd/maya2026/0.35.0_202602171127-017700d/mayausd/` - plugin root
+  - `/usr/autodesk/mayausd/maya2026/0.35.0_202602171127-017700d/mayausd.mod` - module def
+  - `/usr/autodesk/modules/maya/2026/mayausd.mod` - Maya auto-discovery location
+  - Subdirs: MayaUSD_0.24.11, MayaUSD_0.25.5, USD_0.24.11, USD_0.25.5
+- The .mod file uses `%MULTI_USD_VERSION%` and `<PLUGIN_DIR>` placeholders
+- build.sh NEEDS FIX: currently looks for `MayaUSD` dir after extraction but RPM is there instead
+- **Learnings for future iterations:**
+  - Always test extraction to verify actual archive contents before writing build.sh
+  - Makeself archives can contain RPMs, not just file trees
+  - `rpm -ivh --nodeps --noscripts --root` is the cleanest way to extract RPM without root/cpio
+  - The multi-USD-version layout means the .mod file needs special handling
+---
