@@ -1,0 +1,131 @@
+specificationVersion: 'jobtemplate-2023-09'
+name: Maya USD Render
+description: |
+  This job bundle renders a USD scene using Maya with the Maya USD plugin (maya-usd).
+
+  To run it, you will need Maya and the Maya USD plugin available in the PATH in one of the following ways:
+    * As conda packages when your queue has a conda queue environment set up to
+      provide virtual environments for jobs.
+    * Installed on the worker hosts that run the job. You can customize your Deadline Cloud
+      queue, fleets, and this job to fit your own production pipeline.
+
+parameterDefinitions:
+
+# Render Parameters
+- name: USDSceneFile
+  type: PATH
+  objectType: FILE
+  dataFlow: IN
+  userInterface:
+    control: CHOOSE_INPUT_FILE
+    label: USD Scene File
+    groupLabel: Render Parameters
+    fileFilters:
+    - label: USD Scene Files
+      patterns: ["*.usd", "*.usdc", "*.usda", "*.usdz"]
+    - label: All Files
+      patterns: ["*"]
+  description: >
+    Choose the USD scene file you want to render. Use the 'Job Attachments' tab
+    to add textures and other files that the job needs.
+  default: sample.usda
+- name: Frames
+  type: STRING
+  userInterface:
+    control: LINE_EDIT
+    label: Frames
+    groupLabel: Render Parameters
+  default: "1"
+- name: OutputDir
+  type: PATH
+  objectType: DIRECTORY
+  dataFlow: OUT
+  userInterface:
+    control: CHOOSE_DIRECTORY
+    label: Output Directory
+    groupLabel: Render Parameters
+  description: Choose the render output directory.
+  default: output
+- name: ImageWidth
+  type: INT
+  userInterface:
+    control: SPIN_BOX
+    label: Image Width
+    groupLabel: Render Parameters
+  default: 1920
+- name: ImageHeight
+  type: INT
+  userInterface:
+    control: SPIN_BOX
+    label: Image Height
+    groupLabel: Render Parameters
+  default: 1080
+
+# Software Environment
+- name: CondaPackages
+  type: STRING
+  userInterface:
+    control: HIDDEN
+  description: >
+    This parameter provides a default value for the Conda environment,
+    specifying maya-usd to provide Maya with the USD plugin.
+  default: maya-usd
+
+steps:
+- name: Render
+  parameterSpace:
+    taskParameterDefinitions:
+    - name: Frame
+      type: INT
+      range: "{{Param.Frames}}"
+  script:
+    embeddedFiles:
+    - name: Render
+      filename: render.py
+      type: TEXT
+      data: |
+        import sys
+        import maya.standalone
+        maya.standalone.initialize()
+
+        import maya.cmds as cmds
+        import maya.mel as mel
+
+        # Load the Maya USD plugin
+        cmds.loadPlugin("mayaUsdPlugin")
+
+        # Import the USD scene into Maya
+        usd_file = r'{{Param.USDSceneFile}}'
+        cmds.mayaUSDImport(file=usd_file)
+
+        # Set render resolution
+        cmds.setAttr("defaultResolution.width", {{Param.ImageWidth}})
+        cmds.setAttr("defaultResolution.height", {{Param.ImageHeight}})
+
+        # Set up output
+        frame = {{Task.Param.Frame}}
+        output_dir = r'{{Param.OutputDir}}'
+        output_file = '{}/output.{:04d}.png'.format(output_dir, frame)
+
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Set frame and render
+        cmds.currentTime(frame)
+        cmds.setAttr("defaultRenderGlobals.imageFilePrefix", output_file.replace('.png', ''), type="string")
+        cmds.setAttr("defaultRenderGlobals.imfPluginKey", "png", type="string")
+
+        # Render using Maya software renderer
+        cmds.render(batch=True)
+
+        maya.standalone.uninitialize()
+        sys.exit(0)
+    actions:
+      onRun:
+        command: mayapy
+        args: ['{{Task.File.Render}}']
+  hostRequirements:
+    attributes:
+    - name: attr.worker.os.family
+      anyOf:
+      - linux
