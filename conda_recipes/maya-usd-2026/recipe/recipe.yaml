@@ -1,0 +1,39 @@
+# Recipe in rattler-build format.
+# See https://prefix-dev.github.io/rattler-build/latest/
+
+context:
+  version: "0.35.0"
+  maya_version: "2026"
+
+package:
+  name: maya-usd
+  version: ${{ version }}
+
+source:
+  url: file://archive_files/MayaUSD_${{ version }}_Maya${{ maya_version }}.3_Linux.run
+  sha256: PLACEHOLDER
+  target_directory: installer
+
+build:
+  number: 0
+  prefix_detection:
+    ignore_binary_files: True
+  dynamic_linking:
+    binary_relocation: False
+    missing_dso_allowlist:
+    - "**"
+
+requirements:
+  build:
+    - maya 2026.*
+  run:
+    - maya 2026.*
+
+tests:
+  - script:
+    - mayapy -c 'import maya.standalone; maya.standalone.initialize(); from maya.cmds import loadPlugin; loadPlugin("mayaUsdPlugin"); print("maya-usd loaded successfully"); maya.standalone.uninitialize()'
+
+about:
+  homepage: https://github.com/Autodesk/maya-usd
+  license: Apache-2.0
+  summary: Universal Scene Description (USD) plugin for Autodesk Maya.
