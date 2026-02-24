@@ -109,3 +109,17 @@ Started: 2026-02-24
   - The submit script auto-uploads archive_files and recipe to S3 job attachments
   - Build took ~8 minutes including worker startup time
 ---
+
+## 2026-02-24T04:12 - US-004
+- Verified existing maya_usd_render job bundle (created in earlier iteration)
+- Files already present: template.yaml, sample.usda, README.md
+- All acceptance criteria met:
+  - template.yaml uses mayapy with maya.standalone, loads mayaUsdPlugin, renders with Maya software renderer
+  - Parameters: USDSceneFile, Frames, OutputDir, ImageWidth, ImageHeight, CondaPackages (default: maya-usd)
+  - hostRequirements restricts to linux
+  - sample.usda has cube, sphere, camera, dome light, distant light
+  - Template passes openjd check validation
+- **Learnings for future iterations:**
+  - Package name in recipe.yaml (maya-usd) differs from recipe directory name (maya-usd-2026)
+  - CondaPackages default should match the package name, not the directory name
+---
