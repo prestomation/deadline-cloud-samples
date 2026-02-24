@@ -27,6 +27,17 @@ This job bundle uses the `maya-usd` conda package by default. To build this pack
 
 ## Sample Asset
 
-`sample.usda` is a simple scene containing basic geometry with a camera and lighting. This scene contains no external assets and can be rendered without attaching any other files.
+The `assets/` directory contains a sample scene featuring a realistic apple model from [Poly Haven](https://polyhaven.com/a/food_apple_01):
 
-This work by the Deadline Cloud team is marked with [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/?ref=chooser-v1)
+- `apple_scene.usda` - Main scene file with camera, lighting, and ground plane
+- `food_apple_01_2k.usdc` - Apple model with PBR materials (7K triangles)
+- `textures/` - 2K resolution diffuse, roughness, and normal maps
+
+The apple model is licensed under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain) by Oliver Harries. Total size: ~3.3 MB.
+
+This scene demonstrates USD features including:
+- External asset references
+- PBR materials with texture maps
+- Camera and lighting setup
+
+The original `sample.usda` (basic primitives) is also included for minimal testing.

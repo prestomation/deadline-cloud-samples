@@ -26,9 +26,19 @@ parameterDefinitions:
     - label: All Files
       patterns: ["*"]
   description: >
-    Choose the USD scene file you want to render. Use the 'Job Attachments' tab
-    to add textures and other files that the job needs.
-  default: sample.usda
+    Choose the USD scene file you want to render.
+  default: assets/apple_scene.usda
+- name: AssetDir
+  type: PATH
+  objectType: DIRECTORY
+  dataFlow: IN
+  userInterface:
+    control: CHOOSE_DIRECTORY
+    label: Asset Directory
+    groupLabel: Render Parameters
+  description: >
+    Directory containing USD assets, textures, and referenced files.
+  default: assets
 - name: Frames
   type: STRING
   userInterface:

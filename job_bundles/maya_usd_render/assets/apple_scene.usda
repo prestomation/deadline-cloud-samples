@@ -1,0 +1,55 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "World" {
+    # Reference the apple model
+    def "Apple" (
+        prepend references = @./food_apple_01_2k.usdc@
+    ) {
+        float3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # Camera positioned to view the apple
+    def Camera "MainCamera" {
+        float2 clippingRange = (0.01, 100)
+        float focalLength = 50
+        float3 xformOp:translate = (0.15, 0.08, 0.35)
+        float3 xformOp:rotateXYZ = (-10, 15, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+
+    # Environment dome light for soft ambient lighting
+    def DomeLight "DomeLight" {
+        float inputs:intensity = 0.3
+        color3f inputs:color = (0.9, 0.95, 1.0)
+    }
+
+    # Key light - main directional light
+    def DistantLight "KeyLight" {
+        float inputs:intensity = 3.0
+        color3f inputs:color = (1.0, 0.98, 0.95)
+        float3 xformOp:rotateXYZ = (-45, 45, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+
+    # Fill light - softer secondary light
+    def DistantLight "FillLight" {
+        float inputs:intensity = 1.0
+        color3f inputs:color = (0.9, 0.95, 1.0)
+        float3 xformOp:rotateXYZ = (-30, -60, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+
+    # Ground plane for shadow catching
+    def Mesh "Ground" {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, -0.01, -1), (1, -0.01, -1), (1, -0.01, 1), (-1, -0.01, 1)]
+        color3f[] primvars:displayColor = [(0.4, 0.4, 0.4)]
+    }
+}
