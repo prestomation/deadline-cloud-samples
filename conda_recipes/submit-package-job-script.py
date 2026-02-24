@@ -19,30 +19,98 @@ from urllib.parse import urlparse
 
 import yaml
 
+
+meta_doc = """A Deadline Cloud conda recipe has the following form:
+
+{software_name}-{major.minor}/
+├── deadline-cloud.yaml
+├── README.md           # optional
+└── recipe/
+    ├── meta.yaml       # For conda-build build tool
+    ├── recipe.yaml       # For rattler-build build tool
+    └── build.sh        # For Linux Builds
+    └── bld.bat         # For Windows Builds
+
+
+deadline-cloud.yaml has the following form:
+```yaml
+condaPlatforms:
+  - platform: linux-64 
+    defaultSubmit: true # whether to build this platform by default when no platforms are specified as script arguments
+    sourceArchiveFilename:
+    - Autodesk_Maya_2025_Linux_64bit.tgz # This file should be in the archive_files/ directory 
+    sourceDownloadInstructions: 'Download the Autodesk_Maya_2025_Linux_64bit.tgz full download file from Autodesk.'
+    buildTool: rattler-build # one of rattler-build or conda-build
+jobParameters:
+  - name: CondaChannels  # Any conda channels needed to install dependencies specified in the recipe.yaml
+    value: conda-forge
+```
+"""
+
 try:
-    from deadline.client.api import create_job_from_job_bundle, get_boto3_client, list_queues
+    from deadline.client.api import (
+        create_job_from_job_bundle,
+        get_boto3_client,
+        list_queues,
+    )
     from deadline.client.config import get_setting, set_setting
     from deadline.client.config.config_file import read_config
     from deadline.client.job_bundle import create_job_history_bundle_dir
 except ModuleNotFoundError:
-    print("ERROR: The `deadline` library is not installed. Please install it with the following command:")
+    print(
+        "ERROR: The `deadline` library is not installed. Please install it with the following command:"
+    )
     print(f' "{sys.executable}" -m pip install deadline')
     sys.exit(1)
 
 
-def validate_recipe(recipe_dir):
+class DeadlineCondaRecipeBuild:
+    default_build_tool: str
+    conda_platforms: list[str]
+    job_parameters: any
+
+
+def validate_recipe_and_get_build_params(
+    recipe_dir, conda_platform_patterns
+) -> DeadlineCondaRecipeBuild:
     """Validate the conda build recipe directory with some basic sanity checks."""
-    if not os.path.isdir(recipe_dir):
-        raise RuntimeError(f"The recipe directory does not exist: {recipe_dir}.")
+    try:
+        if not os.path.isdir(recipe_dir):
+            raise RuntimeError(f"The recipe directory does not exist: {recipe_dir}.")
 
-    meta_yaml_file = recipe_dir / "recipe" / "meta.yaml"
-    recipe_yaml_file = recipe_dir / "recipe" / "recipe.yaml"
-    if not meta_yaml_file.is_file() and not recipe_yaml_file.is_file():
-        raise RuntimeError(f"No meta.yaml or recipe.yaml exists in {recipe_dir}.")
+        meta_yaml_file = recipe_dir / "recipe" / "meta.yaml"
+        recipe_yaml_file = recipe_dir / "recipe" / "recipe.yaml"
+        if not meta_yaml_file.is_file() and not recipe_yaml_file.is_file():
+            raise RuntimeError(f"No meta.yaml or recipe.yaml exists in {recipe_dir}.")
 
-    submit_yaml_file = recipe_dir / "deadline-cloud.yaml"
-    if not submit_yaml_file.is_file():
-        raise RuntimeError(f"The submit metadata file does not exist: {submit_yaml_file}.")
+        submit_yaml_file = recipe_dir / "deadline-cloud.yaml"
+        if not submit_yaml_file.is_file():
+            raise RuntimeError(
+                f"The submit metadata file does not exist: {submit_yaml_file}."
+            )
+
+        submit_meta = yaml.safe_load((submit_yaml_file).read_text())
+
+        build_params = DeadlineCondaRecipeBuild()
+
+        default_build_tool = submit_meta.pop("buildTool", "conda-build")
+
+        if default_build_tool not in ["conda-build", "rattler-build"]:
+            raise RuntimeError(
+                f"Recipe provided an unsupported build tool {default_build_tool}"
+            )
+        build_params.default_build_tool = default_build_tool
+
+        build_params.conda_platforms = get_recipe_conda_platforms(
+            conda_platforms_meta=submit_meta.pop("condaPlatforms"),
+            conda_platform_patterns=conda_platform_patterns,
+        )
+        build_params.job_parameters = submit_meta.get("jobParameters")
+    except Exception as e:
+        print(meta_doc)
+        raise
+
+    return build_params
 
 
 def determine_s3_channel(s3_channel_url, config):
@@ -67,10 +135,14 @@ def determine_s3_channel(s3_channel_url, config):
         )
         s3_channel_bucket = queue["jobAttachmentSettings"]["s3BucketName"]
         if s3_channel_url:
-            print("A channel name provided, attaching it to the queue's job attachments bucket")
+            print(
+                "A channel name provided, attaching it to the queue's job attachments bucket"
+            )
             s3_channel_prefix = f"Conda/{s3_channel_url.strip('/')}"
         else:
-            print("No channel URL was provided, using a default prefix on the queue's job attachments bucket")
+            print(
+                "No channel URL was provided, using a default prefix on the queue's job attachments bucket"
+            )
             s3_channel_prefix = "Conda/Default"
     return (s3_channel_bucket, s3_channel_prefix)
 
@@ -116,9 +188,15 @@ def apply_regex_substitutions_to_object(obj, regex_substitutions):
             obj = re.sub(pattern, repl, obj)
         return obj
     elif isinstance(obj, list):
-        return [apply_regex_substitutions_to_object(item, regex_substitutions) for item in obj]
+        return [
+            apply_regex_substitutions_to_object(item, regex_substitutions)
+            for item in obj
+        ]
     elif isinstance(obj, dict):
-        return {key: apply_regex_substitutions_to_object(value, regex_substitutions) for key, value in obj.items()}
+        return {
+            key: apply_regex_substitutions_to_object(value, regex_substitutions)
+            for key, value in obj.items()
+        }
     else:
         return obj
 
@@ -130,30 +208,54 @@ def extract_job_entity(job_template, entity_type, entity_name):
         if entity["name"] == entity_name:
             # Filter the job's parameters to just the ones referenced by the environment
             parameter_names = find_referenced_parameters(entity)
-            parameter_defs = [param for param in job_template["parameterDefinitions"] if param["name"] in parameter_names]
+            parameter_defs = [
+                param
+                for param in job_template["parameterDefinitions"]
+                if param["name"] in parameter_names
+            ]
             result = {
                 "parameterDefinitions": deepcopy(parameter_defs),
                 "entity": deepcopy(entity),
             }
 
+            # Get the entity's metadata, which is YAML in the description starting from a line
+            # containing only the content "meta:"
+            description_lines = entity.get("description", "").splitlines()
+            meta_index = None
+            try:
+                meta_index = description_lines.index("meta:")
+            except ValueError:
+                pass
+            if meta_index is not None:
+                meta = yaml.safe_load("\n".join(description_lines[meta_index:]))
+                result["meta"] = meta["meta"]
+
             return result
 
-    raise RuntimeError(f"Job template does not have an entity named {entity_name!r} to extract from the {entity_type} list")
+    raise RuntimeError(
+        f"Job template does not have an entity named {entity_name!r} to extract from the {entity_type} list"
+    )
 
 
 def get_recipe_conda_platforms(*, conda_platforms_meta, conda_platform_patterns):
     if not conda_platforms_meta:
-        raise RuntimeError("The recipe's deadline-cloud.yaml doesn't have a condaPlatforms item")
+        raise RuntimeError(
+            "The recipe's deadline-cloud.yaml doesn't have a condaPlatforms item"
+        )
     all_platform_names = set()
     for conda_platform in conda_platforms_meta:
         if "variant" in conda_platform:
-            conda_platform["name"] = f"{conda_platform['platform']}-{conda_platform['variant']}"
+            conda_platform["name"] = (
+                f"{conda_platform['platform']}-{conda_platform['variant']}"
+            )
         else:
             conda_platform["name"] = conda_platform["platform"]
 
         # Add the name into the list of all names, checking for errors in the input yaml.
         if conda_platform["name"] in all_platform_names:
-            raise RuntimeError(f"The recipe's deadline-cloud.yaml has platform/variant {conda_platform['name']} listed multiple times")
+            raise RuntimeError(
+                f"The recipe's deadline-cloud.yaml has platform/variant {conda_platform['name']} listed multiple times"
+            )
         all_platform_names.add(conda_platform["name"])
 
     # Get the conda platforms to submit. If provided at the CLI, they must select from the ones specified
@@ -161,7 +263,11 @@ def get_recipe_conda_platforms(*, conda_platforms_meta, conda_platform_patterns)
     if conda_platform_patterns:
         requested_conda_platform_names = set()
         for pattern in conda_platform_patterns:
-            matched_names = [name for name in all_platform_names if fnmatch.fnmatchcase(name, pattern)]
+            matched_names = [
+                name
+                for name in all_platform_names
+                if fnmatch.fnmatchcase(name, pattern)
+            ]
             # Validate that each pattern matched at least one name
             if len(matched_names) == 0:
                 raise RuntimeError(
@@ -169,10 +275,16 @@ def get_recipe_conda_platforms(*, conda_platforms_meta, conda_platform_patterns)
                 )
             requested_conda_platform_names.update(matched_names)
         # Filter to the names that matched
-        conda_platforms_meta = [p for p in conda_platforms_meta if p["name"] in requested_conda_platform_names]
+        conda_platforms_meta = [
+            p
+            for p in conda_platforms_meta
+            if p["name"] in requested_conda_platform_names
+        ]
     else:
         # Filter to the conda platforms with field "defaultSubmit" set to True
-        conda_platforms_meta = [p for p in conda_platforms_meta if p.get("defaultSubmit")]
+        conda_platforms_meta = [
+            p for p in conda_platforms_meta if p.get("defaultSubmit")
+        ]
 
     return conda_platforms_meta
 
@@ -180,13 +292,17 @@ def get_recipe_conda_platforms(*, conda_platforms_meta, conda_platform_patterns)
 def set_queue_in_config(queue_name_prefix, config):
     queues = list_queues(farmId=get_setting("defaults.farm_id", config))["queues"]
     # Get the shortest-named queue that has the requested name as a prefix
-    candidate_queues = [queue for queue in queues if queue["displayName"].startswith(queue_name_prefix)]
+    candidate_queues = [
+        queue for queue in queues if queue["displayName"].startswith(queue_name_prefix)
+    ]
     candidate_queues.sort(key=lambda queue: len(queue["displayName"]), reverse=True)
     if candidate_queues:
         set_setting("defaults.queue_id", candidate_queues[0]["queueId"], config)
     else:
         print(f"No queue matched the prefix {queue_name_prefix!r}")
-        print(f"Available queues: {', '.join(repr(queue['displayName']) for queue in queues)}")
+        print(
+            f"Available queues: {', '.join(repr(queue['displayName']) for queue in queues)}"
+        )
         sys.exit(1)
 
 
@@ -201,20 +317,31 @@ def create_job_bundle(
     s3_channel_bucket,
     s3_channel_prefix,
     conda_platforms,
-    enable_fast_build,
-    extra_build_tool_args,
 ):
     # Read the conda_build_linux_package template, and then decompose it into pieces
     build_linux_package_bundle_dir = Path(__file__).parent / "conda_build_linux_package"
-    build_linux_package_template = yaml.safe_load((build_linux_package_bundle_dir / "template.yaml").read_text())
+    build_linux_package_template = yaml.safe_load(
+        (build_linux_package_bundle_dir / "template.yaml").read_text()
+    )
     parameter_values = {
         item["name"]: item["value"]
-        for item in yaml.safe_load((build_linux_package_bundle_dir / "parameter_values.yaml").read_text())["parameterValues"]
+        for item in yaml.safe_load(
+            (build_linux_package_bundle_dir / "parameter_values.yaml").read_text()
+        )["parameterValues"]
     }
-    package_build_env = extract_job_entity(build_linux_package_template, "jobEnvironment", "Package Build Env")
-    build_package_template = extract_job_entity(build_linux_package_template, "step", "PackageBuild")
+    package_build_env = extract_job_entity(
+        build_linux_package_template, "jobEnvironment", "Package Build Env"
+    )
+    build_package_template = extract_job_entity(
+        build_linux_package_template, "step", "PackageBuild"
+    )
+    reindex_channel_template = extract_job_entity(
+        build_linux_package_template, "step", "ReindexCondaChannel"
+    )
 
-    conda_platform_host_requirements = yaml.safe_load((Path(__file__).parent / "conda_platform_host_requirements.yaml").read_text())
+    conda_platform_host_requirements = yaml.safe_load(
+        (Path(__file__).parent / "conda_platform_host_requirements.yaml").read_text()
+    )
 
     # Copy the scripts from the build_linux_package job bundle
     shutil.copytree(
@@ -223,12 +350,7 @@ def create_job_bundle(
         dirs_exist_ok=True,
     )
 
-    # Start with all the parameters that are not per-step
-    collected_parameters = {
-        param["name"]: param
-        for param in build_linux_package_template["parameterDefinitions"]
-        if not param["userInterface"].get("groupLabel", "").startswith("Per-step")
-    }
+    collected_parameters = {}
     build_package_steps = []
 
     # Populate job-level parameter values
@@ -243,16 +365,15 @@ def create_job_bundle(
     for platform_meta in conda_platforms:
         platform = platform_meta["platform"]
         platform_template = deepcopy(build_package_template)
-        step_name_suffix = "".join(s.capitalize() for s in platform.split("-")) + "".join(
-            s.capitalize() for s in platform_meta.get("variant", "").split("-")
-        )
+        step_name_suffix = "".join(
+            s.capitalize() for s in platform.split("-")
+        ) + "".join(s.capitalize() for s in platform_meta.get("variant", "").split("-"))
         build_tool = platform_meta.get("buildTool", default_build_tool)
 
         if build_tool not in ["conda-build", "rattler-build"]:
-            if build_tool:
-                raise RuntimeError(f"Recipe provided an unsupported build tool {build_tool}")
-            else:
-                raise RuntimeError(f"Recipe must provide a build tool with the buildTool option")
+            raise RuntimeError(
+                f"Recipe provided an unsupported build tool {build_tool}"
+            )
 
         parameter_values[f"CondaPlatform_{step_name_suffix}"] = platform
         parameter_values[f"BuildTool_{step_name_suffix}"] = build_tool
@@ -265,7 +386,9 @@ def create_job_bundle(
             if isinstance(source_archive_filename, str):
                 if not (archive_file_dir / source_archive_filename).is_file():
                     missing_source_archives.append(source_archive_filename)
-                parameter_values[f"OverrideSourceArchive1_{step_name_suffix}"] = str(archive_file_dir / source_archive_filename)
+                parameter_values[f"OverrideSourceArchive1_{step_name_suffix}"] = str(
+                    archive_file_dir / source_archive_filename
+                )
             elif isinstance(source_archive_filename, list):
                 if not 1 <= len(source_archive_filename) <= 2:
                     raise RuntimeError(
@@ -274,40 +397,63 @@ def create_job_bundle(
                 for i, filename in enumerate(source_archive_filename, start=1):
                     if not (archive_file_dir / filename).is_file():
                         missing_source_archives.append(filename)
-                    parameter_values[f"OverrideSourceArchive{i}_{step_name_suffix}"] = str(archive_file_dir / filename)
+                    parameter_values[f"OverrideSourceArchive{i}_{step_name_suffix}"] = (
+                        str(archive_file_dir / filename)
+                    )
             else:
-                raise RuntimeError("The deadline-cloud.yaml property sourceArchiveFilename must be a string or a list.")
+                raise RuntimeError(
+                    "The deadline-cloud.yaml property sourceArchiveFilename must be a string or a list."
+                )
 
             if missing_source_archives:
-                print(f"ERROR: File(s) {', '.join(missing_source_archives)} not found in {archive_file_dir}.")
-                print(f"To submit the {recipe_dir.name} package build, you need these files.")
-                print(f"To acquire this archive, follow these instructions and place it in the {archive_file_dir} directory:")
+                print(
+                    f"ERROR: File(s) {', '.join(missing_source_archives)} not found in {archive_file_dir}."
+                )
+                print(
+                    f"To submit the {recipe_dir.name} package build, you need these files."
+                )
+                print(
+                    f"To acquire this archive, follow these instructions and place it in the {archive_file_dir} directory:"
+                )
                 print(f"    {platform_meta['sourceDownloadInstructions']}")
                 sys.exit(1)
 
         source_archive_directory = platform_meta.get("sourceArchiveDirectory")
         if source_archive_directory:
-            parameter_values[f"OverrideSourceDir_{step_name_suffix}"] = str(archive_file_dir / source_archive_directory)
+            parameter_values[f"OverrideSourceDir_{step_name_suffix}"] = str(
+                archive_file_dir / source_archive_directory
+            )
             if not (archive_file_dir / source_archive_directory).is_dir():
-                print(f"ERROR: Directory {source_archive_directory} not found in {archive_file_dir}.")
-                print(f"To submit the {recipe_dir.name} package build, you need this directory.")
+                print(
+                    f"ERROR: Directory {source_archive_directory} not found in {archive_file_dir}."
+                )
+                print(
+                    f"To submit the {recipe_dir.name} package build, you need this directory."
+                )
                 sys.exit(1)
 
-        # Process the per-step parameters
+        # Rename the platform-specific parameter values
+        per_step_parameters = set(platform_template["meta"]["perStepParameters"])
+
+        # Process the parameters, using an annotation to share them or make them unique (based on platform)
         params = platform_template["parameterDefinitions"]
         renames = []
         for param in params:
-            if param["userInterface"].get("groupLabel", "").startswith("Per-step"):
-                original_param_name = param["name"]
+            original_param_name = param["name"]
+            if original_param_name in per_step_parameters:
                 param["name"] = f"{original_param_name}_{step_name_suffix}"
                 param["userInterface"]["groupLabel"] += f": {step_name_suffix}"
                 renames.append(
                     (
-                        re.compile(r"\{\{\s*" + re.escape(f"Param.{original_param_name}") + r"\s*\}\}"),
+                        re.compile(
+                            r"\{\{\s*"
+                            + re.escape(f"Param.{original_param_name}")
+                            + r"\s*\}\}"
+                        ),
                         "{{Param." + param["name"] + "}}",
                     )
                 )
-                collected_parameters[param["name"]] = param
+            collected_parameters[param["name"]] = param
 
         step = platform_template["entity"]
         step["name"] += step_name_suffix
@@ -322,20 +468,38 @@ def create_job_bundle(
 
         # If provided, write the conda_build_config.yaml file
         if "condaBuildConfig" in platform_meta or "variantConfig" in platform_meta:
-            variant_config_path = job_bundle_dir / "data" / f"variant_config_{step_name_suffix}.yaml"
+            variant_config_path = (
+                job_bundle_dir / "data" / f"variant_config_{step_name_suffix}.yaml"
+            )
             variant_config_path.parent.mkdir(exist_ok=True)
             variant_config_path.write_text(
                 json.dumps(
-                    platform_meta.get("condaBuildConfig", platform_meta.get("variantConfig")),
+                    platform_meta.get(
+                        "condaBuildConfig", platform_meta.get("variantConfig")
+                    ),
                     indent=1,
                     sort_keys=False,
                 )
             )
-            parameter_values[f"VariantConfigFile_{step_name_suffix}"] = str(variant_config_path)
+            parameter_values[f"VariantConfigFile_{step_name_suffix}"] = str(
+                variant_config_path
+            )
 
         build_package_steps.append(apply_regex_substitutions_to_object(step, renames))
 
-    print(f"Creating steps for conda platforms: {', '.join(sorted(p['name'] for p in conda_platforms))}")
+    print(
+        f"Creating steps for conda platforms: {', '.join(sorted(p['name'] for p in conda_platforms))}"
+    )
+
+    # Process the channel reindex step
+    reindex_step = reindex_channel_template["entity"]
+    reindex_step["dependencies"] = [
+        {"dependsOn": step["name"]} for step in build_package_steps
+    ]
+    for param in reindex_channel_template["parameterDefinitions"]:
+        collected_parameters[param["name"]] = param
+    for param in package_build_env["parameterDefinitions"]:
+        collected_parameters[param["name"]] = param
 
     job_description = f"""
     This job uses conda-build to build a Conda package for
@@ -343,21 +507,6 @@ def create_job_bundle(
     the S3 Conda channel s3::{s3_channel_bucket}/{s3_channel_prefix}.
     It then reindexes the channel.
     """
-
-    # Add fast build parameter if enabled
-    if enable_fast_build:
-        print("Enabling fast build optimizations")
-        parameter_values["EnableFastBuild"] = "true"
-    else:
-        parameter_values["EnableFastBuild"] = "false"
-
-    # Add build args parameter if provided
-    if extra_build_tool_args:
-        print(f"Adding custom build arguments: {extra_build_tool_args}")
-        parameter_values["ExtraBuildToolArgs"] = extra_build_tool_args
-    else:
-        parameter_values["ExtraBuildToolArgs"] = ""
-
 
     # Assemble the job template
     job_template = {
@@ -368,12 +517,16 @@ def create_job_bundle(
         "jobEnvironments": [
             package_build_env["entity"],
         ],
-        "steps": [*build_package_steps],
+        "steps": [*build_package_steps, reindex_step],
     }
 
-    (job_bundle_dir / "template.yaml").write_text(json.dumps(job_template, sort_keys=False))
+    (job_bundle_dir / "template.yaml").write_text(
+        json.dumps(job_template, indent=1, sort_keys=False)
+    )
 
-    parameter_values_list = [{"name": name, "value": value} for name, value in parameter_values.items()]
+    parameter_values_list = [
+        {"name": name, "value": value} for name, value in parameter_values.items()
+    ]
     (job_bundle_dir / "parameter_values.yaml").write_text(
         json.dumps(
             {"parameterValues": parameter_values_list},
@@ -381,6 +534,8 @@ def create_job_bundle(
             sort_keys=False,
         )
     )
+
+    return parameter_values_list
 
     return parameter_values_list
 
@@ -403,9 +558,21 @@ def progress_callback(op_name):
 
 def main():
     parser = argparse.ArgumentParser(prog="submit-package-job")
-    parser.add_argument("recipe_dir", type=Path, help="The package build recipe to build on Deadline Cloud.")
-    parser.add_argument("-q", "--queue", default="Package", help="A prefix of the queue name to submit to.")
-    parser.add_argument("--s3-channel", help="The S3 conda channel to build the package to, in s3://S3_BUCKET/prefix_path format.")
+    parser.add_argument(
+        "recipe_dir",
+        type=Path,
+        help="The package build recipe to build on Deadline Cloud.",
+    )
+    parser.add_argument(
+        "-q",
+        "--queue",
+        default="Package",
+        help="A prefix of the queue name to submit to.",
+    )
+    parser.add_argument(
+        "--s3-channel",
+        help="The S3 conda channel to build the package to, in s3://S3_BUCKET/prefix_path format.",
+    )
     parser.add_argument(
         "-p",
         "--conda-platform",
@@ -413,13 +580,9 @@ def main():
         help="The conda platform, as specified by the recipe's deadline-cloud.yaml. Can be wildcard * like filename globs.",
     )
     parser.add_argument(
-        "--all-platforms", action="store_true", help="Submit all the platforms specified by the recipe's deadline-cloud.yaml."
-    )
-    parser.add_argument(
-        "-f", "--fast-build", action="store_true", help="Enable build optimizations by reduing the amount of compression performed for faster package creation."
-    )
-    parser.add_argument(
-        "-a", "--extra-build-tool-args", help="Additional arguments to pass to the conda-build or rattler-build command, space-separated."
+        "--all-platforms",
+        action="store_true",
+        help="Submit all the platforms specified by the recipe's deadline-cloud.yaml.",
     )
     args = parser.parse_args()
 
@@ -427,44 +590,35 @@ def main():
         parser.error("-p/--conda-platform cannot be used together with --all-platforms")
 
     recipe_dir = args.recipe_dir.absolute()
-    validate_recipe(recipe_dir)
+    params = validate_recipe_and_get_build_params(
+        recipe_dir,
+        conda_platform_patterns=["**"] if args.all_platforms else args.conda_platform,
+    )
 
     config = read_config()
     set_queue_in_config(args.queue, config)
 
     s3_channel_bucket, s3_channel_prefix = determine_s3_channel(args.s3_channel, config)
-    print(f"Building packages into channel s3://{s3_channel_bucket}/{s3_channel_prefix}")
-
-    # Read the recipe's submit metadata
-    submit_meta = yaml.safe_load((recipe_dir / "deadline-cloud.yaml").read_text())
-    conda_platforms = get_recipe_conda_platforms(
-        conda_platforms_meta=submit_meta.get("condaPlatforms"),
-        conda_platform_patterns=["**"] if args.all_platforms else args.conda_platform,
+    print(
+        f"Building packages into channel s3://{s3_channel_bucket}/{s3_channel_prefix}"
     )
 
-    job_name = f"CondaBuild: {recipe_dir.name} ({', '.join(conda_platform['name'] for conda_platform in conda_platforms)})"
+    job_name = f"CondaBuild: {recipe_dir.name} ({', '.join(conda_platform['name'] for conda_platform in params.conda_platforms)})"
     # TODO: The job name is shortened to 10 characters for this directory until the job attachments
     #       implementation on Windows improves support for long filename paths. Restore it to just `job_name`
     #       when that is fixed.
     job_bundle_dir = Path(create_job_history_bundle_dir("CondaBuild", job_name[:10]))
 
-    default_build_tool = submit_meta.get("buildTool")
-
-    if default_build_tool is not None and default_build_tool not in ["conda-build", "rattler-build"]:
-        raise RuntimeError(f"Recipe provided an unsupported build tool {default_build_tool}")
-
     job_parameters = create_job_bundle(
-        default_build_tool=default_build_tool,
+        default_build_tool=params.default_build_tool,
         job_bundle_dir=job_bundle_dir,
         recipe_dir=recipe_dir,
         archive_file_dir=Path(__file__).parent / "archive_files",
-        job_parameters_meta=submit_meta.get("jobParameters"),
+        job_parameters_meta=params.job_parameters,
         job_name=job_name,
         s3_channel_bucket=s3_channel_bucket,
         s3_channel_prefix=s3_channel_prefix,
-        conda_platforms=conda_platforms,
-        enable_fast_build=args.fast_build,
-        extra_build_tool_args=args.extra_build_tool_args,
+        conda_platforms=params.conda_platforms,
     )
     print(f"Wrote job bundle:\n  '{job_bundle_dir}'")
     print()
