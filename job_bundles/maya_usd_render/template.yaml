@@ -1,9 +1,9 @@
 specificationVersion: 'jobtemplate-2023-09'
 name: Maya USD Render
 description: |
-  This job bundle renders a USD scene using Maya with the Maya USD plugin (maya-usd).
+  This job bundle renders a USD scene using Maya with the Maya USD plugin (maya-usd) and Arnold renderer.
 
-  To run it, you will need Maya and the Maya USD plugin available in the PATH in one of the following ways:
+  To run it, you will need Maya, the Maya USD plugin, and Arnold (mtoa) available in the PATH in one of the following ways:
     * As conda packages when your queue has a conda queue environment set up to
       provide virtual environments for jobs.
     * Installed on the worker hosts that run the job. You can customize your Deadline Cloud
@@ -78,8 +78,8 @@ parameterDefinitions:
     control: HIDDEN
   description: >
     This parameter provides a default value for the Conda environment,
-    specifying maya-usd to provide Maya with the USD plugin.
-  default: maya-usd=0.32.0
+    specifying maya-usd to provide Maya with the USD plugin and Arnold for rendering.
+  default: maya-usd=0.32.0 maya-mtoa=2026.5.5
 
 steps:
 - name: Render
@@ -95,43 +95,108 @@ steps:
       type: TEXT
       data: |
         import sys
+        import os
         import maya.standalone
         maya.standalone.initialize()
 
         import maya.cmds as cmds
-        cmds.loadPlugin("mayaUsdPlugin")
+        cmds.loadPlugin("mtoa")
 
-        # Import the USD scene into Maya
+        # Get USD file path
         usd_file = r'{{Param.USDSceneFile}}'
-        cmds.mayaUSDImport(file=usd_file)
+        print(f"USD file: {usd_file}")
+
+        # Create Arnold StandIn node to load USD via Arnold's USD procedural
+        standin_shape = cmds.createNode('aiStandIn', name='usdStandInShape')
+        standin_transform = cmds.listRelatives(standin_shape, parent=True)[0]
+        cmds.setAttr(f'{standin_shape}.dso', usd_file, type='string')
+        # Scale up since USD scene uses meters, Maya uses cm
+        cmds.setAttr(f'{standin_transform}.scaleX', 100)
+        cmds.setAttr(f'{standin_transform}.scaleY', 100)
+        cmds.setAttr(f'{standin_transform}.scaleZ', 100)
+        print(f"Created Arnold StandIn: {standin_transform}")
+
+        # Create a utility shader for visualization (aiStandardSurface doesn't work via operators)
+        shader = cmds.shadingNode('aiUtility', asShader=True, name='appleShader')
+        cmds.setAttr(f'{shader}.shadeMode', 2)  # ndoteye mode for nice shading
+        cmds.setAttr(f'{shader}.color', 0.75, 0.2, 0.15, type='double3')
+
+        # Create operator to assign shader
+        op = cmds.createNode('aiSetParameter', name='shaderOp')
+        cmds.setAttr(f'{op}.selection', '/World/*', type='string')
+        cmds.setAttr(f'{op}.assignment[0]', f'shader = "{shader}"', type='string')
+        cmds.connectAttr(f'{op}.out', f'{standin_shape}.operators[0]')
+        print(f"Created apple shader: {shader}")
 
         # Set render resolution
         cmds.setAttr("defaultResolution.width", {{Param.ImageWidth}})
         cmds.setAttr("defaultResolution.height", {{Param.ImageHeight}})
 
         # Set up output
-        import os
         frame = {{Task.Param.Frame}}
         output_dir = r'{{Param.OutputDir}}'
-        output_file = '{}/output.{:04d}.png'.format(output_dir, frame)
         os.makedirs(output_dir, exist_ok=True)
 
-        # Set frame and render
-        cmds.currentTime(frame)
-        cmds.setAttr("defaultRenderGlobals.imageFilePrefix", output_file.replace('.png', ''), type="string")
-        cmds.setAttr("defaultRenderGlobals.imfPluginKey", "png", type="string")
+        # Use persp camera and position it to see the apple scene
+        render_camera = 'persp'
+        cmds.setAttr('persp.translateX', 30)
+        cmds.setAttr('persp.translateY', 20)
+        cmds.setAttr('persp.translateZ', 50)
+        cmds.setAttr('persp.rotateX', -15)
+        cmds.setAttr('persp.rotateY', 30)
+        cmds.setAttr("perspShape.renderable", 1)
 
-        # Render using Maya software renderer
-        cmds.render(batch=True)
+        # Create Arnold sky dome light for illumination
+        dome_light = cmds.createNode('aiSkyDomeLight', name='arnoldSkyDome')
+        cmds.setAttr(f'{dome_light}.intensity', 1.0)
+        print(f"Created Arnold sky dome light")
+
+        # Configure Arnold renderer
+        cmds.setAttr("defaultRenderGlobals.ren", "arnold", type="string")
+        cmds.setAttr("defaultRenderGlobals.imageFormat", 32)  # PNG
+        cmds.setAttr("defaultRenderGlobals.outFormatControl", 0)
+        cmds.setAttr("defaultRenderGlobals.extensionPadding", 4)
+        cmds.setAttr("defaultRenderGlobals.putFrameBeforeExt", 1)
+        cmds.setAttr("defaultRenderGlobals.animation", 1)
+        cmds.setAttr("defaultRenderGlobals.startFrame", frame)
+        cmds.setAttr("defaultRenderGlobals.endFrame", frame)
+
+        # Set output path
+        output_prefix = '{}/output'.format(output_dir)
+        cmds.setAttr("defaultRenderGlobals.imageFilePrefix", output_prefix, type="string")
+
+        # Set frame
+        cmds.currentTime(frame)
+
+        # Save scene to temp file for batch render
+        temp_scene = os.path.join(output_dir, 'temp_scene.ma')
+        cmds.file(rename=temp_scene)
+        cmds.file(save=True, type='mayaAscii')
 
         maya.standalone.uninitialize()
-        sys.exit(0)
+
+        # Use Maya Render command with Arnold
+        import subprocess
+        result = subprocess.run([
+            'Render',
+            '-r', 'arnold',
+            '-s', str(frame),
+            '-e', str(frame),
+            '-rd', output_dir,
+            '-im', 'output',
+            '-cam', render_camera,
+            temp_scene
+        ], capture_output=True, text=True)
+        print(result.stdout)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        sys.exit(result.returncode)
     - name: RunScript
       filename: run.sh
       type: TEXT
       data: |
         #!/bin/bash
-        # Set up library, plugin, Python, and script paths for MayaUSD.
+        # Set up library, plugin, Python, and script paths for MayaUSD and Arnold.
         # The .mod file placeholders don't resolve in batch mode, so set paths explicitly.
         if [ -n "$CONDA_PREFIX" ]; then
             MAYA_LIB="$CONDA_PREFIX/usr/autodesk/maya${MAYA_VERSION:-2026}/lib"
