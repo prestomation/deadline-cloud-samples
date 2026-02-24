@@ -2,6 +2,6 @@ condaPlatforms:
   - platform: linux-64
     defaultSubmit: true
     sourceArchiveFilename:
-    - MayaUSD_0.35.0_Maya2026.3_Linux.run
-    sourceDownloadInstructions: 'Download MayaUSD_0.35.0_Maya2026.3_Linux.run from https://github.com/Autodesk/maya-usd/releases/download/v0.35.0/MayaUSD_0.35.0_Maya2026.3_Linux.run'
+    - MayaUSD_0.32.0_Maya2026.1_Linux.run
+    sourceDownloadInstructions: 'Download MayaUSD_0.32.0_Maya2026.1_Linux.run from https://github.com/Autodesk/maya-usd/releases/download/v0.32.0/MayaUSD_0.32.0_Maya2026.1_Linux.run'
     buildTool: rattler-build

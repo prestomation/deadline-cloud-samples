@@ -14,6 +14,7 @@ Started: 2026-02-24
 - RPM installs to: /usr/autodesk/mayausd/maya2026/<build_version>/mayausd/{MayaUSD_*,USD_*}
 - The .mod file uses %MULTI_USD_VERSION% and <PLUGIN_DIR> placeholders
 - Plugin has multi-USD-version layout: MayaUSD_0.24.11, MayaUSD_0.25.5, USD_0.24.11, USD_0.25.5
+- SIGPIPE fix: Never use `find ... | head -1` with `set -o pipefail`; use `find ... -print -quit` instead (exit 141 = SIGPIPE)
 
 ---
 
@@ -122,4 +123,17 @@ Started: 2026-02-24
 - **Learnings for future iterations:**
   - Package name in recipe.yaml (maya-usd) differs from recipe directory name (maya-usd-2026)
   - CondaPackages default should match the package name, not the directory name
+---
+
+## 2026-02-24T05:59 - US-003
+- Submitted and completed conda build job for maya-usd-2026 (MayaUSD 0.32.0)
+- Fixed SIGPIPE (exit 141) in build.sh: replaced `find ... | head -1` with `find ... -print -quit`
+- Files changed:
+  - conda_recipes/maya-usd-2026/recipe/build.sh (SIGPIPE fix)
+- Job ID: job-89aee2f44fff4c39a79af5a883b5af2e (SUCCEEDED, ~249s)
+- Package published to s3://rendering-agent-spaces-workshop/Conda/Default
+- **Learnings for future iterations:**
+  - `set -o pipefail` + `find | head -1` = exit 141 (SIGPIPE when head exits early)
+  - Use `find -print -quit` to get first match without piping
+  - `-q RenderingAgent` prefix matches `RenderingAgentSpacesWorkshop` queue
 ---

@@ -23,6 +23,8 @@ rm -rf "$EXTRACT_DIR"
 
 # Move the installed files into the conda prefix, preserving the directory structure
 # RPM installs to /usr/autodesk/mayausd/maya2026/<build_version>/ and /usr/autodesk/modules/
+# Remove .build-id symlinks that conflict with the maya base package
+find "$RPM_ROOT" -path "*/.build-id" -type d -exec rm -rf {} + 2>/dev/null || true
 cp -r "$RPM_ROOT/usr" "$PREFIX/usr"
 rm -rf "$RPM_ROOT"
 
@@ -32,7 +34,7 @@ mkdir -p "$PREFIX/usr/autodesk/modules/maya/$MAYA_VERSION"
 find "$PREFIX/usr/autodesk/modules" -maxdepth 1 -name '*.mod' -exec cp {} "$PREFIX/usr/autodesk/modules/maya/$MAYA_VERSION/" \;
 
 # Add activation script to set LD_LIBRARY_PATH for the MayaUSD shared libraries
-MAYAUSD_LIB_DIR=$(find "$PREFIX/usr/autodesk/mayausd" -path "*/lib" -type d -print -quit)
+MAYAUSD_LIB_DIR=$(find "$PREFIX/usr/autodesk/mayausd" -type d -name lib -path "*/MayaUSD*/lib" ! -path "*/genglsl/*" -print -quit)
 if [ -n "$MAYAUSD_LIB_DIR" ]; then
     RELATIVE_LIB=${MAYAUSD_LIB_DIR#$PREFIX/}
     mkdir -p "$PREFIX/etc/conda/activate.d"

@@ -69,7 +69,7 @@ parameterDefinitions:
   description: >
     This parameter provides a default value for the Conda environment,
     specifying maya-usd to provide Maya with the USD plugin.
-  default: maya-usd
+  default: maya-usd=0.32.0
 
 steps:
 - name: Render
@@ -89,9 +89,6 @@ steps:
         maya.standalone.initialize()
 
         import maya.cmds as cmds
-        import maya.mel as mel
-
-        # Load the Maya USD plugin
         cmds.loadPlugin("mayaUsdPlugin")
 
         # Import the USD scene into Maya
@@ -103,11 +100,10 @@ steps:
         cmds.setAttr("defaultResolution.height", {{Param.ImageHeight}})
 
         # Set up output
+        import os
         frame = {{Task.Param.Frame}}
         output_dir = r'{{Param.OutputDir}}'
         output_file = '{}/output.{:04d}.png'.format(output_dir, frame)
-
-        import os
         os.makedirs(output_dir, exist_ok=True)
 
         # Set frame and render
@@ -120,10 +116,34 @@ steps:
 
         maya.standalone.uninitialize()
         sys.exit(0)
+    - name: RunScript
+      filename: run.sh
+      type: TEXT
+      data: |
+        #!/bin/bash
+        # Set up library, plugin, Python, and script paths for MayaUSD.
+        # The .mod file placeholders don't resolve in batch mode, so set paths explicitly.
+        if [ -n "$CONDA_PREFIX" ]; then
+            MAYA_LIB="$CONDA_PREFIX/usr/autodesk/maya${MAYA_VERSION:-2026}/lib"
+            # Find MayaUSD root, lib, and plugin dirs (handles both MayaUSD/ and MayaUSD_<ver>/ layouts)
+            MAYAUSD_ROOT=$(find "$CONDA_PREFIX/usr/autodesk/mayausd" -type d -name "MayaUSD*" -not -name "*.d" 2>/dev/null | sort -V | tail -1)
+            MAYAUSD_LIB="$MAYAUSD_ROOT/lib"
+            MAYAUSD_PLUGIN="$MAYAUSD_ROOT/plugin/adsk/plugin"
+            MAYAUSD_SCRIPTS="$MAYAUSD_ROOT/plugin/adsk/scripts"
+            MAYAUSD_PYTHON="$MAYAUSD_ROOT/lib/python"
+            # Find USD root for pxr Python bindings
+            USD_ROOT=$(find "$CONDA_PREFIX/usr/autodesk/mayausd" -type d -name "USD*" -not -name "*.d" 2>/dev/null | sort -V | tail -1)
+            USD_PYTHON="${USD_ROOT:+$USD_ROOT/lib/python}"
+            export LD_LIBRARY_PATH="$MAYA_LIB:$MAYAUSD_LIB:${USD_ROOT:+$USD_ROOT/lib:}${LD_LIBRARY_PATH:-}"
+            export MAYA_PLUG_IN_PATH="$MAYAUSD_PLUGIN:${MAYA_PLUG_IN_PATH:-}"
+            export MAYA_SCRIPT_PATH="$MAYAUSD_SCRIPTS:${MAYA_SCRIPT_PATH:-}"
+            export PYTHONPATH="$MAYAUSD_PYTHON:${USD_PYTHON:+$USD_PYTHON:}${PYTHONPATH:-}"
+        fi
+        exec mayapy "{{Task.File.Render}}"
     actions:
       onRun:
-        command: mayapy
-        args: ['{{Task.File.Render}}']
+        command: bash
+        args: ['{{Task.File.RunScript}}']
   hostRequirements:
     attributes:
     - name: attr.worker.os.family
