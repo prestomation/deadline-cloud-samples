@@ -11,7 +11,7 @@ package:
 
 source:
   url: file://archive_files/MayaUSD_${{ version }}_Maya${{ maya_version }}.3_Linux.run
-  sha256: PLACEHOLDER
+  sha256: c6d4adf82c5c4da0e5b25969fdec8a0103faa972e78466c07855448abf9d618f
   target_directory: installer
 
 build:
@@ -24,8 +24,6 @@ build:
     - "**"
 
 requirements:
-  build:
-    - maya 2026.*
   run:
     - maya 2026.*
 
