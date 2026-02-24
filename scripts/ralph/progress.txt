@@ -8,6 +8,7 @@ Started: 2026-02-24
 - Maya plugin recipes use `usr/autodesk/modules/maya/<version>/` for .mod files so Maya auto-loads plugins
 - build.sh uses `set -xeuo pipefail` and references `$PREFIX`, `$SRC_DIR`, `$PKG_VERSION`
 - Plugin recipes depend on `maya 2026.*` in both build and run requirements
+- Submit queue: use `-q RenderingAgentSpacesWorkshop` (default "Package" queue doesn't exist)
 - MayaUSD .run installer is Makeself 2.3.0 containing an RPM, not a direct file tree
 - RPM extraction: `rpm -ivh --nodeps --noscripts --root $DIR file.rpm` (no cpio needed)
 - RPM installs to: /usr/autodesk/mayausd/maya2026/<build_version>/mayausd/{MayaUSD_*,USD_*}
@@ -81,4 +82,30 @@ Started: 2026-02-24
   - Makeself archives can contain RPMs, not just file trees
   - `rpm -ivh --nodeps --noscripts --root` is the cleanest way to extract RPM without root/cpio
   - The multi-USD-version layout means the .mod file needs special handling
+---
+
+## 2026-02-24T03:58 - US-002
+- Fixed build.sh to properly handle RPM extraction from the .run installer
+- Updated recipe.yaml sha256 from PLACEHOLDER to actual hash (c6d4adf8...)
+- Removed unnecessary `build` requirement for maya (only needed at runtime)
+- Files changed:
+  - conda_recipes/maya-usd-2026/recipe/build.sh (rewritten)
+  - conda_recipes/maya-usd-2026/recipe/recipe.yaml (sha256 + requirements fix)
+- **Learnings for future iterations:**
+  - The RPM preserves the full /usr/autodesk/ directory structure including the .mod file
+  - No need to manually create .mod files - the RPM already includes them at /usr/autodesk/modules/maya/2026/
+  - `rpm -ivh --nodeps --noscripts --root DIR` cleanly extracts without needing cpio
+---
+
+## 2026-02-24T04:10 - US-003
+- Submitted conda build job for maya-usd-2026 package
+- Installer was already in conda_recipes/archive_files/ (411MB)
+- Command: `./submit-package-job maya-usd-2026 -p linux-64 -q RenderingAgentSpacesWorkshop`
+- Job ID: job-c643505f58e24404ad4f2c714899c456
+- Job completed successfully in ~489 seconds
+- Package built to s3://rendering-agent-spaces-workshop/Conda/Default
+- **Learnings for future iterations:**
+  - Default queue name "Package" doesn't exist; use `-q RenderingAgentSpacesWorkshop`
+  - The submit script auto-uploads archive_files and recipe to S3 job attachments
+  - Build took ~8 minutes including worker startup time
 ---

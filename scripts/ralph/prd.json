@@ -1,0 +1,170 @@
+{
+  "project": "MayaUSD",
+  "branchName": "ralph/maya-usd-sample",
+  "description": "Create a conda package and job bundle sample for the Maya USD plugin (Autodesk maya-usd), build the package, and test rendering a USD scene on AWS Deadline Cloud",
+  "context": {
+    "technologyConstraints": {
+      "mayaVersion": "Maya 2026 is the target version",
+      "mayaUsdVersion": "0.35.0 is the latest release",
+      "linuxOnly": "Linux-64 platform only for initial implementation",
+      "condaBuildTool": "Use rattler-build format for recipes (not conda-build)",
+      "installerIssue": "The .run installer is a Makeself archive with two interactive prompts: (1) license text piped through 'less -e' which hijacks the terminal, and (2) a menu asking 1=Install, 2=Extract, 3=Exit. To run non-interactively: create a fake 'less' script (#!/bin/sh\\ncat > /dev/null), prepend it to PATH, then pipe 'yes\\n2' to stdin. Example: mkdir -p /tmp/fakeless && echo '#!/bin/sh\\ncat > /dev/null' > /tmp/fakeless/less && chmod +x /tmp/fakeless/less && echo -e 'yes\\n2' | PATH=/tmp/fakeless:$PATH ./MayaUSD_0.35.0_Maya2026.3_Linux.run --nox11 --target /path/to/extract"
+    },
+    "referenceImplementation": {
+      "mayaPluginRecipe": "conda_recipes/maya-mtoa-2026/ - Example Maya plugin conda recipe",
+      "mayaBaseRecipe": "conda_recipes/maya-2026/ - Base Maya conda recipe",
+      "usdJobBundle": "job_bundles/houdini_husk_usd_render/ - USD rendering job bundle example",
+      "mayaJobBundle": "job_bundles/maya_cli_render/ - Maya CLI rendering job bundle"
+    },
+    "infrastructureValues": {
+      "mayaUsdDownloadUrl": "https://github.com/Autodesk/maya-usd/releases/download/v0.35.0/MayaUSD_0.35.0_Maya2026.3_Linux.run",
+      "deadlineMonitorUrl": "https://sandbox.us-west-2.gamma.monitor.bealine.aws.dev/farms/farm-f8466bc9640c4ebdbf072073372464ec/queues/queue-8f7df3db6e4844a7acea0a11a0098959"
+    },
+    "commands": {
+      "submitCondaBuild": "./submit-package-job maya-usd-2026 -p linux-64",
+      "submitJobBundle": "deadline bundle submit job_bundles/maya_usd_render/",
+      "waitForJob": "deadline job wait --job-id JOB_ID --timeout 600",
+      "getJobLogs": "deadline job logs --job-id JOB_ID"
+    }
+  },
+  "bestPractices": [
+    "Follow existing conda recipe patterns in conda_recipes/",
+    "Use rattler-build recipe.yaml format (not meta.yaml)",
+    "Include README.md with download instructions for each recipe",
+    "Job templates must use specificationVersion: 'jobtemplate-2023-09'",
+    "Include CondaPackages parameter for queue environment integration",
+    "Test templates with 'openjd check' before submitting",
+    "Use hostRequirements to restrict to linux platform",
+    "Wait for jobs to complete using 'deadline job wait' before proceeding",
+    "On job failure, use 'deadline job logs --job-id JOB_ID' to diagnose errors",
+    "Test installer extraction locally before submitting conda build jobs"
+  ],
+  "notInScope": [
+    "Windows support - Linux only for initial implementation",
+    "macOS support - Linux only for initial implementation",
+    "Maya 2025 or earlier versions",
+    "Building maya-usd from source - use pre-built installer",
+    "Integration with specific render engines (Arnold, etc.) - just the USD plugin"
+  ],
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Test maya-usd installer extraction locally",
+      "description": "As a developer, I need to figure out how to extract the maya-usd .run installer non-interactively before creating the conda recipe",
+      "context": {
+        "relevantFiles": [
+          "conda_recipes/archive_files/",
+          "conda_recipes/maya-mtoa-2026/recipe/build.sh"
+        ]
+      },
+      "acceptanceCriteria": [
+        "Download the MayaUSD_0.35.0_Maya2026.3_Linux.run installer to a temp directory",
+        "Test running the installer with --help or --info to discover available flags",
+        "Find the correct flags to extract/install non-interactively (e.g., --noexec --target, or yes | ./installer, or similar)",
+        "Document the working extraction command in progress.txt",
+        "Identify where the plugin files are installed (modules, plug-ins directories)"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "SOLVED: The .run file is a Makeself 2.3.0 archive. It has MS_PrintLicense() which pipes license through 'less -e' (hijacks terminal, blocks stdin piping), then a menu (1=Install requiring root, 2=Extract, 3=Exit). Simple 'echo yes | ./installer' does NOT work because less consumes the terminal. Fix: create a fake less that discards output (#!/bin/sh\\ncat > /dev/null), put it first on PATH, then pipe 'yes\\n2'. Use --nox11 to prevent xterm spawn and --target DIR to set extraction path. The embedded script is ./setup.sh. Use --noexec to skip running it if only extraction is needed."
+    },
+    {
+      "id": "US-002",
+      "title": "Create maya-usd-2026 conda recipe structure",
+      "description": "As a Deadline Cloud user, I need a conda package for Maya USD plugin so I can use it in my render jobs",
+      "context": {
+        "relevantFiles": [
+          "conda_recipes/maya-mtoa-2026/deadline-cloud.yaml",
+          "conda_recipes/maya-mtoa-2026/recipe/recipe.yaml",
+          "conda_recipes/maya-mtoa-2026/recipe/build.sh",
+          "conda_recipes/maya-2026/recipe/recipe.yaml",
+          "conda_recipes/README.md"
+        ]
+      },
+      "acceptanceCriteria": [
+        "Create conda_recipes/maya-usd-2026/ directory",
+        "Create deadline-cloud.yaml with linux-64 platform, sourceArchiveFilename for the .run installer, and download instructions",
+        "Create recipe/recipe.yaml in rattler-build format with maya dependency",
+        "Create recipe/build.sh using the non-interactive extraction method discovered in US-001",
+        "Create README.md with download and usage instructions",
+        "Recipe follows patterns from maya-mtoa-2026"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Submit conda build job for maya-usd-2026",
+      "description": "As a Deadline Cloud user, I need the maya-usd package built and published to the conda channel",
+      "context": {
+        "relevantFiles": [
+          "conda_recipes/submit-package-job",
+          "conda_recipes/README.md"
+        ]
+      },
+      "acceptanceCriteria": [
+        "Copy the MayaUSD_0.35.0_Maya2026.3_Linux.run installer to conda_recipes/archive_files/",
+        "Run ./submit-package-job maya-usd-2026 -p linux-64 from conda_recipes/ directory",
+        "Capture the job ID from submission output",
+        "Wait for the conda build job to complete using 'deadline job wait --job-id JOB_ID --timeout 600'",
+        "If job fails, run 'deadline job logs --job-id JOB_ID' to get error details and fix the recipe",
+        "Re-submit and wait again if fixes were needed",
+        "Verify the package was built by checking job completed successfully"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Job job-c643505f58e24404ad4f2c714899c456 completed successfully. Package built to s3://rendering-agent-spaces-workshop/Conda/Default. Queue: RenderingAgentSpacesWorkshop."
+    },
+    {
+      "id": "US-004",
+      "title": "Create maya_usd_render job bundle with sample USD scene",
+      "description": "As a Deadline Cloud user, I want a job template to render USD scenes using Maya with the USD plugin",
+      "context": {
+        "relevantFiles": [
+          "job_bundles/houdini_husk_usd_render/template.yaml",
+          "job_bundles/houdini_husk_usd_render/sample.usda",
+          "job_bundles/maya_cli_render/template.yaml",
+          "job_bundles/README.md"
+        ]
+      },
+      "acceptanceCriteria": [
+        "Create job_bundles/maya_usd_render/ directory",
+        "Create a simple sample.usda file with a renderable sphere, camera, and dome light",
+        "Create template.yaml with parameters for USD scene file, frames, output directory, resolution",
+        "Include CondaPackages parameter defaulting to maya-usd-2026",
+        "Use mayapy with maya.standalone to load USD stage and render using Maya hardware or playblast",
+        "Include hostRequirements restricting to linux",
+        "Create README.md explaining the job bundle usage",
+        "Template passes 'openjd check' validation"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Submit maya_usd_render job and verify output",
+      "description": "As a Deadline Cloud user, I want to verify the job bundle works by rendering the sample USD scene",
+      "context": {
+        "relevantFiles": [
+          "job_bundles/maya_usd_render/template.yaml",
+          "job_bundles/maya_usd_render/sample.usda"
+        ]
+      },
+      "acceptanceCriteria": [
+        "Submit the maya_usd_render job bundle using 'deadline bundle submit job_bundles/maya_usd_render/'",
+        "Capture the job ID from submission output",
+        "Wait for the render job to complete using 'deadline job wait --job-id JOB_ID --timeout 600'",
+        "If job fails, run 'deadline job logs --job-id JOB_ID' to get error details and fix the template",
+        "Re-submit and wait again if fixes were needed",
+        "Verify job completed successfully",
+        "Report the job URL for viewing results: append ?jobId=JOB_ID to the monitor URL",
+        "Document any issues or learnings in progress.txt"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
