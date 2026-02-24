@@ -15,6 +15,11 @@ Started: 2026-02-24
 - The .mod file uses %MULTI_USD_VERSION% and <PLUGIN_DIR> placeholders
 - Plugin has multi-USD-version layout: MayaUSD_0.24.11, MayaUSD_0.25.5, USD_0.24.11, USD_0.25.5
 - SIGPIPE fix: Never use `find ... | head -1` with `set -o pipefail`; use `find ... -print -quit` instead (exit 141 = SIGPIPE)
+- Always pin conda package versions in CondaPackages param when multiple versions exist in channel
+- MayaUSD 0.32.0 uses `MayaUSD/` dir (no version suffix); 0.35.0 uses `MayaUSD_<ver>/`
+- Remove RPM .build-id symlinks in build.sh to avoid ClobberError with maya base package
+- MayaUSD batch mode needs: LD_LIBRARY_PATH, MAYA_PLUG_IN_PATH, MAYA_SCRIPT_PATH, PYTHONPATH
+- USD files need `defaultPrim` metadata for mayaUSDImport
 
 ---
 
@@ -136,4 +141,29 @@ Started: 2026-02-24
   - `set -o pipefail` + `find | head -1` = exit 141 (SIGPIPE when head exits early)
   - Use `find -print -quit` to get first match without piping
   - `-q RenderingAgent` prefix matches `RenderingAgentSpacesWorkshop` queue
+---
+
+## 2026-02-24T06:08 - US-005
+- Submitted and verified maya_usd_render job bundle
+- Fixed multiple issues preventing successful render:
+  1. Pinned maya-usd=0.32.0 in CondaPackages (conda was picking incompatible 0.35.0)
+  2. Removed stale 0.35.0 package from S3 channel and updated repodata.json
+  3. Rebuilt conda package (build 2): removed .build-id files causing ClobberError, fixed activation script lib path
+  4. Fixed run.sh find patterns: MayaUSD_* → MayaUSD* (0.32.0 has no version suffix)
+  5. Added PYTHONPATH (pxr, mayaUsd Python bindings) and MAYA_SCRIPT_PATH (MEL scripts) to run.sh
+  6. Added defaultPrim="World" to sample.usda (required by mayaUSDImport)
+- Files changed:
+  - job_bundles/maya_usd_render/template.yaml (CondaPackages pin, run.sh paths)
+  - job_bundles/maya_usd_render/sample.usda (defaultPrim)
+  - conda_recipes/maya-usd-2026/recipe/build.sh (.build-id removal, activation script fix)
+  - conda_recipes/maya-usd-2026/recipe/recipe.yaml (build number bump)
+- Job ID: job-a6d957fe74f143d6aa4dc3a9ee87bec7 (SUCCEEDED, ~65s)
+- Job URL: https://sandbox.us-west-2.gamma.monitor.bealine.aws.dev/farms/farm-f8466bc9640c4ebdbf072073372464ec/queues/queue-8f7df3db6e4844a7acea0a11a0098959?jobId=job-a6d957fe74f143d6aa4dc3a9ee87bec7
+- **Learnings for future iterations:**
+  - Always pin conda package versions in CondaPackages when multiple versions exist in channel
+  - MayaUSD 0.32.0 uses `MayaUSD/` dir (no version suffix), 0.35.0 uses `MayaUSD_0.25.5/`
+  - RPM .build-id symlinks conflict between maya and maya-usd packages; remove in build.sh
+  - MayaUSD needs PYTHONPATH (for pxr module), MAYA_SCRIPT_PATH (for MEL procs), LD_LIBRARY_PATH (for .so), MAYA_PLUG_IN_PATH (for plugin .so)
+  - USD files need defaultPrim metadata for mayaUSDImport to work
+  - `find -path "*/lib" -print -quit` finds first match which may be a subdirectory; use more specific patterns
 ---
