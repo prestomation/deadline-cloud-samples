@@ -1,0 +1,88 @@
+specificationVersion: 'jobtemplate-2023-09'
+name: tmate Shell
+
+parameterDefinitions:
+- name: Timeout
+  type: INT
+  default: 3600
+  userInterface:
+    control: SPIN_BOX
+    label: Session Timeout (seconds)
+  description: >
+    How long to keep the tmate session alive, in seconds.
+    The job will end when this timeout is reached or when
+    the tmate session is closed.
+- name: AuthorizedKey
+  type: STRING
+  userInterface:
+    control: LINE_EDIT
+    label: SSH Public Key
+  description: >
+    SSH public key to authorize for the tmate session.
+    Only the holder of the corresponding private key can connect.
+    The submit.sh script generates an ephemeral keypair automatically.
+- name: CondaPackages
+  type: STRING
+  userInterface:
+    control: HIDDEN
+  default: tmate
+  description: >
+    Installs tmate from conda-forge via the queue's Conda environment.
+- name: CondaChannels
+  type: STRING
+  userInterface:
+    control: HIDDEN
+  default: conda-forge
+
+steps:
+- name: TmateSession
+  script:
+    actions:
+      onRun:
+        command: bash
+        args: ['{{Task.File.Run}}']
+        cancelation:
+          mode: NOTIFY_THEN_TERMINATE
+          notifyPeriodInSeconds: 5
+    embeddedFiles:
+    - name: Run
+      type: TEXT
+      runnable: true
+      data: |
+        set -euo pipefail
+
+        WORKDIR="{{Session.WorkingDirectory}}"
+        AUTH_KEYS="$WORKDIR/authorized_keys"
+        SOCK="$WORKDIR/tmate.sock"
+
+        echo '{{Param.AuthorizedKey}}' > "$AUTH_KEYS"
+
+        echo "=== Starting tmate session (key-restricted) ==="
+        tmate -a "$AUTH_KEYS" -S "$SOCK" new-session -d
+
+        for i in $(seq 1 30); do
+          if tmate -S "$SOCK" display -p '#{tmate_ssh}' 2>/dev/null | grep -q '@'; then
+            break
+          fi
+          sleep 1
+        done
+
+        echo "============================================"
+        echo "=== TMATE SESSION READY ==="
+        echo "============================================"
+        echo "SSH: $(tmate -S "$SOCK" display -p '#{tmate_ssh}')"
+        echo "============================================"
+        echo "Session will stay open for {{Param.Timeout}} seconds."
+        echo "============================================"
+
+        SECONDS=0
+        while [ $SECONDS -lt {{Param.Timeout}} ]; do
+          if ! tmate -S "$SOCK" has-session 2>/dev/null; then
+            echo "tmate session ended."
+            exit 0
+          fi
+          sleep 10
+        done
+
+        echo "Timeout reached. Closing session."
+        tmate -S "$SOCK" kill-server 2>/dev/null || true
