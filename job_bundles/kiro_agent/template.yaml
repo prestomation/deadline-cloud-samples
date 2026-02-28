@@ -1,0 +1,105 @@
+specificationVersion: 'jobtemplate-2023-09'
+name: Kiro Agent Job
+description: |
+  Runs kiro-cli as an AI agent on Deadline Cloud workers.
+
+parameterDefinitions:
+- name: AgentContext
+  type: PATH
+  objectType: DIRECTORY
+  dataFlow: IN
+  default: ./agent_context
+  description: Folder containing system_prompt.txt and user_prompt.txt
+  userInterface:
+    control: CHOOSE_DIRECTORY
+    label: Agent Context Folder
+- name: OutputDir
+  type: PATH
+  objectType: DIRECTORY
+  dataFlow: OUT
+  default: ./kiro_output
+  description: Directory where the agent will write its output
+  userInterface:
+    control: CHOOSE_DIRECTORY
+    label: Output Directory
+- name: KiroAuthFile
+  type: PATH
+  objectType: FILE
+  dataFlow: IN
+  description: Path to kiro-cli data.sqlite3 auth file
+  userInterface:
+    control: CHOOSE_INPUT_FILE
+    label: Kiro Auth File
+
+jobEnvironments:
+- name: KiroSetup
+  description: Install kiro-cli and configure authentication
+  script:
+    actions:
+      onEnter:
+        command: bash
+        args: ['{{Env.File.Setup}}']
+    embeddedFiles:
+    - name: Setup
+      type: TEXT
+      data: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        echo "=== Installing kiro-cli ==="
+        curl -fsSL https://cli.kiro.dev/install | bash
+        export PATH="$HOME/.local/bin:$PATH"
+        echo "openjd_env: PATH=$HOME/.local/bin:$PATH"
+        
+        echo "kiro-cli version: $(kiro-cli --version)"
+        
+        KIRO_DATA_DIR="$HOME/.local/share/kiro-cli"
+        mkdir -p "$KIRO_DATA_DIR"
+        
+        if [ -f '{{Param.KiroAuthFile}}' ]; then
+          echo "=== Configuring Kiro authentication ==="
+          cp '{{Param.KiroAuthFile}}' "$KIRO_DATA_DIR/data.sqlite3"
+          chmod 600 "$KIRO_DATA_DIR/data.sqlite3"
+          echo "Auth configured"
+        fi
+
+steps:
+- name: RunKiroAgent
+  hostRequirements:
+    attributes:
+    - name: attr.worker.os.family
+      anyOf:
+      - linux
+  script:
+    actions:
+      onRun:
+        command: bash
+        args: ['{{Task.File.Run}}']
+    embeddedFiles:
+    - name: Run
+      type: TEXT
+      data: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        OUTPUT_DIR='{{Param.OutputDir}}'
+        CONTEXT_DIR='{{Param.AgentContext}}'
+        mkdir -p "$OUTPUT_DIR"
+        
+        # Read prompts from context folder
+        SYSTEM_PROMPT=$(cat "$CONTEXT_DIR/system_prompt.txt" | sed "s|\${SESSION_DIR}|{{Session.WorkingDirectory}}|g" | sed "s|\${OUTPUT_DIR}|$OUTPUT_DIR|g")
+        USER_PROMPT=$(cat "$CONTEXT_DIR/user_prompt.txt")
+        
+        echo "=== Starting Kiro Agent ==="
+        echo "Context: $CONTEXT_DIR"
+        echo "Output: $OUTPUT_DIR"
+        echo "Prompt: $USER_PROMPT"
+        
+        cd "$OUTPUT_DIR"
+        
+        kiro-cli chat --no-interactive --trust-all-tools "$SYSTEM_PROMPT
+
+        TASK: $USER_PROMPT" 2>&1 | tee "$OUTPUT_DIR/kiro_session.log"
+        
+        echo "=== Complete ==="
+        ls -la "$OUTPUT_DIR"
