@@ -46,6 +46,10 @@ Nested collections provide their own complete indexes where applicable.
 | [Monte Carlo simulation](monte_carlo_simulation/) | Parallel financial simulation followed by result aggregation | You want a non-rendering fan-out/fan-in workload |
 | [MuJoCo sim-to-policy](mujoco_sim_to_policy/) | Simulation data generation, policy training, and rendered evaluation | You need a multi-step robotics ML workflow |
 | [Nuke render](nuke_render/) | Frame-parallel headless compositing with `nuke -x` | You need to render Nuke scripts on workers |
+| [OpenDroneMap simple job](opendronemap_simple_job/) | One-task CPU container photogrammetry with immutable public input, progress reporting, and validated geospatial outputs | You want to process a small aerial survey on one Docker-enabled Linux worker |
+| [OpenDroneMap parallel job](opendronemap_parallel_job/) | An experimental five-stage workflow that dynamically partitions user-selected aerial surveys across Deadline workers | You want to validate ODM split, align, process, and merge fan-out on a Docker-enabled Linux fleet |
+| [PaddleOCR pipeline job](paddleocr_pipeline_job/) | CPU PDF rendering, GPU PP-StructureV3 extraction, and CPU result assembly with hook-expanded document fan-out | PDF rendering and GPU OCR should run on separate Linux fleets |
+| [PaddleOCR simple job](paddleocr_simple_job/) | One GPU task processes an attached PDF and image directory with PP-StructureV3 | You need a compact all-in-one OCR sample for a small batch |
 | [Pip package job](pip_package_job/) | Declaring Python dependencies for a pip queue environment | A shared queue environment should provide job packages |
 | [Pip self-contained job](pip_self_contained_job/) | Creating and activating a pip environment inside one bundle | You cannot or do not want to configure the queue |
 | [POV-Ray 3.7](povray-3.7/) | Raytracing with a Conda-provided command-line renderer | You want a portable, lightweight render example |

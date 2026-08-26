@@ -1,0 +1,8 @@
+version: "1.0"
+
+preSubmission:
+  - command: python3
+    args: [scripts/expand_parallel_job.py]
+    timeout: 120
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"

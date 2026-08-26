@@ -1,0 +1,15 @@
+OutputDir: output
+RetainIntermediates: "False"
+TargetImagesPerSubmodel: 100
+SplitOverlapMeters: 0
+MinimumSharedImages: 10
+OrthophotoResolution: 10
+FeatureQuality: low
+PointCloudQuality: lowest
+GenerateDsm: "True"
+GenerateDtm: "False"
+MaxConcurrency: 2
+ResourceProfile: auto
+CoordinatorMemoryMiB: 0
+SubmodelMemoryMiB: 0
+ScratchGiB: 0

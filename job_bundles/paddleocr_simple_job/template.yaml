@@ -1,0 +1,92 @@
+specificationVersion: jobtemplate-2023-09
+name: PaddleOCR simple document extraction
+description: Process an attached directory of PDF and image documents in one GPU task.
+
+parameterDefinitions:
+  - name: InputDocuments
+    type: PATH
+    objectType: DIRECTORY
+    dataFlow: IN
+    description: Directory of PDF, JPEG, PNG, or TIFF documents to copy as a job attachment.
+    userInterface: {control: CHOOSE_DIRECTORY, label: Input documents, groupLabel: Input and output}
+  - name: OutputDir
+    type: PATH
+    objectType: DIRECTORY
+    dataFlow: OUT
+    default: output
+    description: Directory receiving Markdown, JSON, and manifest outputs.
+    userInterface: {control: CHOOSE_DIRECTORY, label: Output directory, groupLabel: Input and output}
+  - name: OcrLanguage
+    type: STRING
+    default: en
+    allowedValues: [en, ch, japan, korean]
+    userInterface: {control: DROPDOWN_LIST, label: OCR language, groupLabel: Processing}
+  - name: RenderDpi
+    type: INT
+    default: 200
+    minValue: 72
+    maxValue: 400
+    userInterface: {control: SPIN_BOX, label: PDF render DPI, groupLabel: Processing}
+  - name: ModelQuality
+    type: STRING
+    default: standard
+    allowedValues: [standard, high]
+    userInterface: {control: DROPDOWN_LIST, label: Model quality, groupLabel: Processing}
+  - name: JobScriptDir
+    type: PATH
+    objectType: DIRECTORY
+    dataFlow: IN
+    default: scripts
+    userInterface: {control: HIDDEN}
+
+jobEnvironments:
+  - name: PaddleOcrRuntime
+    description: Creates a pinned virtual environment once for each worker session.
+    script:
+      actions:
+        onEnter: {command: bash, args: ["{{Env.File.Setup}}"]}
+      embeddedFiles:
+        - name: Setup
+          type: TEXT
+          data: |
+            set -euo pipefail
+            VENV="{{Session.WorkingDirectory}}/.paddleocr-venv"
+            CACHE="{{Session.WorkingDirectory}}/.paddleocr-model-cache"
+            python3 -m venv "$VENV"
+            "$VENV/bin/python" -m pip install --disable-pip-version-check --upgrade "pip==24.3.1"
+            if command -v nvidia-smi >/dev/null 2>&1; then
+              "$VENV/bin/python" -m pip install --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu118/ "paddlepaddle-gpu==3.1.1"
+            else
+              "$VENV/bin/python" -m pip install "paddlepaddle==3.1.1"
+            fi
+            "$VENV/bin/python" -m pip install "langchain==0.2.17" "paddlex==3.1.0" "paddleocr==3.1.0" "PyMuPDF==1.24.10" "Pillow==10.4.0"
+            mkdir -p "$CACHE"
+            export PATH="$VENV/bin:$PATH" PADDLE_PDX_MODEL_SOURCE_DIR="$CACHE"
+            python -c 'import paddle, paddleocr, fitz, PIL; print("PaddleOCR runtime ready", paddle.device.is_compiled_with_cuda())'
+            if command -v nvidia-smi >/dev/null 2>&1; then
+              python -c 'import paddle; assert paddle.device.is_compiled_with_cuda(), "GPU PaddlePaddle runtime was not installed"'
+              case "{{Param.OcrLanguage}}" in
+                ch) RECOGNITION_MODEL=PP-OCRv4_server_rec ;;
+                en) RECOGNITION_MODEL=en_PP-OCRv4_mobile_rec ;;
+                japan) RECOGNITION_MODEL=japan_PP-OCRv4_mobile_rec ;;
+                korean) RECOGNITION_MODEL=korean_PP-OCRv4_mobile_rec ;;
+              esac
+              python -c "from paddleocr import PPStructureV3; PPStructureV3(text_recognition_model_name='$RECOGNITION_MODEL'); print('PP-StructureV3 model cache ready')"
+            fi
+            echo "openjd_env: PATH=$PATH"
+            echo "openjd_env: PADDLE_PDX_MODEL_SOURCE_DIR=$CACHE"
+
+steps:
+  - name: ProcessDocuments
+    hostRequirements:
+      attributes:
+        - name: attr.worker.os.family
+          anyOf: [linux]
+      amounts:
+        - {name: amount.worker.gpu, min: 1}
+        - {name: amount.worker.memory, min: 32768}
+    script:
+      actions:
+        onRun:
+          command: python
+          args: ["{{Param.JobScriptDir}}/paddleocr_job.py", simple, --input-dir, "{{Param.InputDocuments}}", --output-dir, "{{Param.OutputDir}}", --language, "{{Param.OcrLanguage}}", --dpi, "{{Param.RenderDpi}}", --quality, "{{Param.ModelQuality}}"]

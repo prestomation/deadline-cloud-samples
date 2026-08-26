@@ -1,0 +1,4 @@
+OutputDir: output
+OcrLanguage: en
+RenderDpi: 200
+ModelQuality: standard

@@ -1,0 +1,440 @@
+specificationVersion: jobtemplate-2023-09
+name: OpenDroneMap parallel survey
+description: >
+  Partition a user-selected geotagged JPEG survey, reconstruct and process
+  submodels in parallel, then merge geospatial outputs with OpenDroneMap 3.6.1.
+
+parameterDefinitions:
+  - name: InputImages
+    type: PATH
+    objectType: DIRECTORY
+    dataFlow: IN
+    description: Directory containing one geotagged RGB JPEG survey.
+    userInterface:
+      control: CHOOSE_DIRECTORY
+      label: Input images
+      groupLabel: Input and output
+
+  - name: OutputDir
+    type: PATH
+    objectType: DIRECTORY
+    dataFlow: OUT
+    default: output
+    description: Directory receiving merged outputs, logs, and the final manifest.
+    userInterface:
+      control: CHOOSE_DIRECTORY
+      label: Output directory
+      groupLabel: Input and output
+
+  - name: RetainIntermediates
+    type: STRING
+    default: "False"
+    allowedValues: ["True", "False"]
+    description: Copy curated stage intermediates into the final output.
+    userInterface:
+      control: CHECK_BOX
+      label: Retain intermediates
+      groupLabel: Input and output
+
+  - name: TargetImagesPerSubmodel
+    type: INT
+    default: 100
+    minValue: 2
+    description: Desired number of base images in each submodel.
+    userInterface:
+      control: SPIN_BOX
+      label: Target images per submodel
+      groupLabel: Partitioning
+
+  - name: SplitOverlapMeters
+    type: FLOAT
+    default: 0
+    minValue: 0
+    description: Overlap radius in meters; zero selects the smallest safe radius.
+    userInterface:
+      control: SPIN_BOX
+      label: Split overlap (meters)
+      groupLabel: Partitioning
+
+  - name: MinimumSharedImages
+    type: INT
+    default: 10
+    minValue: 1
+    description: Minimum shared images required to connect neighboring submodels.
+    userInterface:
+      control: SPIN_BOX
+      label: Minimum shared images
+      groupLabel: Partitioning
+
+  - name: OrthophotoResolution
+    type: INT
+    default: 10
+    minValue: 1
+    description: Orthophoto resolution in centimeters per pixel.
+    userInterface:
+      control: SPIN_BOX
+      label: Orthophoto resolution (cm/pixel)
+      groupLabel: Processing
+
+  - name: FeatureQuality
+    type: STRING
+    default: low
+    allowedValues: [ultra, high, medium, low, lowest]
+    description: ODM feature extraction quality.
+    userInterface:
+      control: DROPDOWN_LIST
+      label: Feature quality
+      groupLabel: Processing
+
+  - name: PointCloudQuality
+    type: STRING
+    default: lowest
+    allowedValues: [ultra, high, medium, low, lowest]
+    description: ODM dense point cloud quality.
+    userInterface:
+      control: DROPDOWN_LIST
+      label: Point cloud quality
+      groupLabel: Processing
+
+  - name: GenerateDsm
+    type: STRING
+    default: "True"
+    allowedValues: ["True", "False"]
+    description: Generate and merge a digital surface model.
+    userInterface:
+      control: CHECK_BOX
+      label: Generate DSM
+      groupLabel: Processing
+
+  - name: GenerateDtm
+    type: STRING
+    default: "False"
+    allowedValues: ["True", "False"]
+    description: Generate and merge a digital terrain model.
+    userInterface:
+      control: CHECK_BOX
+      label: Generate DTM
+      groupLabel: Processing
+
+  - name: MaxConcurrency
+    type: INT
+    default: 2
+    minValue: 1
+    description: Maximum processes used inside each ODM task.
+    userInterface:
+      control: SPIN_BOX
+      label: Processes per task
+      groupLabel: Processing
+
+  - name: ResourceProfile
+    type: STRING
+    default: auto
+    allowedValues: [auto, small, medium, large]
+    description: Automatic sizing or a conservative fixed resource profile.
+    userInterface:
+      control: DROPDOWN_LIST
+      label: Resource profile
+      groupLabel: Resources
+
+  - name: CoordinatorMemoryMiB
+    type: INT
+    default: 0
+    minValue: 0
+    description: Coordinator memory override; zero uses the selected profile.
+    userInterface:
+      control: SPIN_BOX
+      label: Coordinator memory override (MiB)
+      groupLabel: Resources
+
+  - name: SubmodelMemoryMiB
+    type: INT
+    default: 0
+    minValue: 0
+    description: Submodel-task memory override; zero uses the selected profile.
+    userInterface:
+      control: SPIN_BOX
+      label: Submodel memory override (MiB)
+      groupLabel: Resources
+
+  - name: ScratchGiB
+    type: INT
+    default: 0
+    minValue: 0
+    description: Scratch-disk override for every step; zero uses the profile.
+    userInterface:
+      control: SPIN_BOX
+      label: Scratch override (GiB)
+      groupLabel: Resources
+
+  - name: IntermediateDir
+    type: PATH
+    objectType: DIRECTORY
+    dataFlow: OUT
+    default: .odm_parallel_intermediates
+    description: Hook-selected job-attachment root for cross-step data.
+    userInterface:
+      control: HIDDEN
+
+  - name: ExpectedImageCount
+    type: INT
+    default: 0
+    minValue: 0
+    description: Submission-hook image count; zero is an unexpanded sentinel.
+    userInterface:
+      control: HIDDEN
+
+  - name: ExpectedSubmodelCount
+    type: INT
+    default: 0
+    minValue: 0
+    description: Submission-hook task count; zero is an unexpanded sentinel.
+    userInterface:
+      control: HIDDEN
+
+  - name: ExpectedSourceBytes
+    type: INT
+    default: 0
+    minValue: 0
+    description: Submission-hook source byte count.
+    userInterface:
+      control: HIDDEN
+
+  - name: ExpectedSourceMegapixels
+    type: FLOAT
+    default: 0
+    minValue: 0
+    description: Submission-hook source megapixel count.
+    userInterface:
+      control: HIDDEN
+
+  - name: PlannedCoordinatorVcpus
+    type: INT
+    default: 2
+    minValue: 1
+    userInterface:
+      control: HIDDEN
+
+  - name: PlannedSubmodelVcpus
+    type: INT
+    default: 2
+    minValue: 1
+    userInterface:
+      control: HIDDEN
+
+  - name: PlannedCoordinatorMemoryMiB
+    type: INT
+    default: 8192
+    minValue: 1
+    userInterface:
+      control: HIDDEN
+
+  - name: PlannedSubmodelMemoryMiB
+    type: INT
+    default: 8192
+    minValue: 1
+    userInterface:
+      control: HIDDEN
+
+  - name: PlannedCoordinatorScratchGiB
+    type: INT
+    default: 20
+    minValue: 1
+    userInterface:
+      control: HIDDEN
+
+  - name: PlannedSubmodelScratchGiB
+    type: INT
+    default: 20
+    minValue: 1
+    userInterface:
+      control: HIDDEN
+
+  - name: JobScriptDir
+    type: PATH
+    objectType: DIRECTORY
+    dataFlow: IN
+    default: scripts
+    description: Directory containing the bundled stage runners and wrappers.
+    userInterface:
+      control: HIDDEN
+
+steps:
+  - name: PrepareSurvey
+    hostRequirements: &coordinatorRequirements
+      attributes:
+        - name: attr.worker.os.family
+          anyOf: [linux]
+        - name: attr.worker.cpu.arch
+          anyOf: [x86_64]
+        - name: attr.OpenDroneMap
+          anyOf: [docker_3_6_1]
+      amounts:
+        - name: amount.worker.vcpu
+          min: 2
+        - name: amount.worker.memory
+          min: 8192
+        - name: amount.OpenDroneMapScratchGiB
+          min: 20
+    script:
+      actions:
+        onRun:
+          command: bash
+          args:
+            - "{{Param.JobScriptDir}}/run_stage.sh"
+            - prepare
+            - "{{Param.InputImages}}"
+            - "{{Param.IntermediateDir}}"
+            - "{{Param.OutputDir}}"
+            - "{{Param.JobScriptDir}}"
+            - "{{Session.WorkingDirectory}}"
+            - "{{Param.ExpectedImageCount}}"
+            - "{{Param.ExpectedSubmodelCount}}"
+            - "{{Param.ExpectedSourceBytes}}"
+            - "{{Param.ExpectedSourceMegapixels}}"
+            - "{{Param.TargetImagesPerSubmodel}}"
+            - "{{Param.SplitOverlapMeters}}"
+            - "{{Param.MinimumSharedImages}}"
+            - "{{Param.OrthophotoResolution}}"
+            - "{{Param.FeatureQuality}}"
+            - "{{Param.PointCloudQuality}}"
+            - "{{Param.GenerateDsm}}"
+            - "{{Param.GenerateDtm}}"
+            - "{{Param.MaxConcurrency}}"
+            - "{{Param.RetainIntermediates}}"
+          cancelation:
+            mode: NOTIFY_THEN_TERMINATE
+            notifyPeriodInSeconds: 30
+
+  - name: ReconstructSubmodels
+    dependencies:
+      - dependsOn: PrepareSurvey
+    hostRequirements: &submodelRequirements
+      attributes:
+        - name: attr.worker.os.family
+          anyOf: [linux]
+        - name: attr.worker.cpu.arch
+          anyOf: [x86_64]
+        - name: attr.OpenDroneMap
+          anyOf: [docker_3_6_1]
+      amounts:
+        - name: amount.worker.vcpu
+          min: 2
+        - name: amount.worker.memory
+          min: 8192
+        - name: amount.OpenDroneMapScratchGiB
+          min: 20
+    parameterSpace:
+      taskParameterDefinitions:
+        - name: SubmodelIndex
+          type: INT
+          range: [0]
+    script:
+      actions:
+        onRun:
+          command: bash
+          args:
+            - "{{Param.JobScriptDir}}/run_stage.sh"
+            - reconstruct
+            - "{{Param.InputImages}}"
+            - "{{Param.IntermediateDir}}"
+            - "{{Param.OutputDir}}"
+            - "{{Param.JobScriptDir}}"
+            - "{{Session.WorkingDirectory}}"
+            - "{{Task.Param.SubmodelIndex}}"
+            - "{{Param.ExpectedSubmodelCount}}"
+            - "{{Param.MaxConcurrency}}"
+          cancelation:
+            mode: NOTIFY_THEN_TERMINATE
+            notifyPeriodInSeconds: 30
+
+  - name: AlignSubmodels
+    dependencies:
+      - dependsOn: PrepareSurvey
+      - dependsOn: ReconstructSubmodels
+    hostRequirements: *coordinatorRequirements
+    script:
+      actions:
+        onRun:
+          command: bash
+          args:
+            - "{{Param.JobScriptDir}}/run_stage.sh"
+            - align
+            - "{{Param.InputImages}}"
+            - "{{Param.IntermediateDir}}"
+            - "{{Param.OutputDir}}"
+            - "{{Param.JobScriptDir}}"
+            - "{{Session.WorkingDirectory}}"
+            - "{{Param.ExpectedSubmodelCount}}"
+            - "{{Param.MaxConcurrency}}"
+          cancelation:
+            mode: NOTIFY_THEN_TERMINATE
+            notifyPeriodInSeconds: 30
+
+  - name: ProcessSubmodels
+    dependencies:
+      - dependsOn: PrepareSurvey
+      - dependsOn: ReconstructSubmodels
+      - dependsOn: AlignSubmodels
+    hostRequirements: *submodelRequirements
+    parameterSpace:
+      taskParameterDefinitions:
+        - name: SubmodelIndex
+          type: INT
+          range: [0]
+    script:
+      actions:
+        onRun:
+          command: bash
+          args:
+            - "{{Param.JobScriptDir}}/run_stage.sh"
+            - process
+            - "{{Param.InputImages}}"
+            - "{{Param.IntermediateDir}}"
+            - "{{Param.OutputDir}}"
+            - "{{Param.JobScriptDir}}"
+            - "{{Session.WorkingDirectory}}"
+            - "{{Task.Param.SubmodelIndex}}"
+            - "{{Param.ExpectedSubmodelCount}}"
+            - "{{Param.OrthophotoResolution}}"
+            - "{{Param.FeatureQuality}}"
+            - "{{Param.PointCloudQuality}}"
+            - "{{Param.GenerateDsm}}"
+            - "{{Param.GenerateDtm}}"
+            - "{{Param.MaxConcurrency}}"
+          cancelation:
+            mode: NOTIFY_THEN_TERMINATE
+            notifyPeriodInSeconds: 30
+
+  - name: MergeSurvey
+    dependencies:
+      - dependsOn: PrepareSurvey
+      - dependsOn: ReconstructSubmodels
+      - dependsOn: AlignSubmodels
+      - dependsOn: ProcessSubmodels
+    hostRequirements: *coordinatorRequirements
+    script:
+      actions:
+        onRun:
+          command: bash
+          args:
+            - "{{Param.JobScriptDir}}/run_stage.sh"
+            - merge
+            - "{{Param.InputImages}}"
+            - "{{Param.IntermediateDir}}"
+            - "{{Param.OutputDir}}"
+            - "{{Param.JobScriptDir}}"
+            - "{{Session.WorkingDirectory}}"
+            - "{{Param.ExpectedImageCount}}"
+            - "{{Param.ExpectedSubmodelCount}}"
+            - "{{Param.TargetImagesPerSubmodel}}"
+            - "{{Param.SplitOverlapMeters}}"
+            - "{{Param.OrthophotoResolution}}"
+            - "{{Param.FeatureQuality}}"
+            - "{{Param.PointCloudQuality}}"
+            - "{{Param.GenerateDsm}}"
+            - "{{Param.GenerateDtm}}"
+            - "{{Param.MaxConcurrency}}"
+            - "{{Param.RetainIntermediates}}"
+          cancelation:
+            mode: NOTIFY_THEN_TERMINATE
+            notifyPeriodInSeconds: 30
